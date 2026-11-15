@@ -4,82 +4,92 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>LockNote</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/haskell.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/powershell.min.js"></script>
 </head>
 <body>
   <div class="app" id="app">
 
-    <!-- Barra lateral escondida (histórico de notas) -->
+    <!-- ===== Barra lateral ===== -->
     <div class="backdrop" id="backdrop"></div>
-    <aside class="drawer" id="drawer" aria-label="Histórico de notas">
-      <header class="drawer-head">
-        <span class="brand">LockNote</span>
-        <button class="icon-btn" id="close-drawer" title="Fechar (Esc)" aria-label="Fechar">
-          <svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+    <aside class="sidebar" id="sidebar" aria-label="Notas">
+      <div class="sb-head">
+        <div class="logo">
+          <span class="logo-mark">
+            <svg viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </span>
+          <span class="logo-name">LockNote</span>
+        </div>
+        <button class="icon-btn" id="collapse" title="Recolher barra lateral (Ctrl+B)" aria-label="Recolher barra lateral">
+          <svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg>
         </button>
-      </header>
+      </div>
 
-      <label class="search">
-        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <input id="search" type="search" placeholder="Buscar" autocomplete="off">
-      </label>
-
-      <div class="filters" role="group" aria-label="Filtrar">
-        <button class="chip active" data-filter="all">Todas</button>
-        <button class="chip icon" data-filter="text" title="Só texto" aria-label="Só texto">
-          <svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg>
+      <div class="new-group">
+        <button class="btn btn-primary" id="new-text" title="Nova nota de texto (Alt+N)">
+          <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+          Nova nota
         </button>
-        <button class="chip icon" data-filter="code" title="Só código" aria-label="Só código">
+        <button class="btn btn-secondary square" id="new-code" title="Nova nota de código" aria-label="Nova nota de código">
           <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
         </button>
       </div>
 
-      <ul id="note-list" class="note-list"></ul>
+      <label class="search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="search" type="search" placeholder="Buscar notas" autocomplete="off">
+        <kbd>Ctrl K</kbd>
+      </label>
+
+      <nav class="tabs" aria-label="Filtrar por tipo">
+        <button class="tab active" data-filter="all">
+          <span>Todas</span><span class="count" data-count="all">0</span>
+        </button>
+        <button class="tab" data-filter="text" title="Notas de texto">
+          <svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg>
+          <span>Texto</span><span class="count" data-count="text">0</span>
+        </button>
+        <button class="tab" data-filter="code" title="Notas de código">
+          <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          <span>Código</span><span class="count" data-count="code">0</span>
+        </button>
+      </nav>
+
+      <div class="note-list" id="note-list"></div>
+
+      <footer class="sb-foot">
+        <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+        <span id="total">0 notas</span>
+        <span class="sep">·</span>
+        <span>salvas localmente</span>
+      </footer>
     </aside>
 
-    <!-- Área principal -->
+    <!-- ===== Área principal ===== -->
     <div class="main">
       <header class="topbar">
-        <button class="icon-btn" id="open-drawer" title="Notas" aria-label="Abrir histórico de notas">
-          <svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+        <button class="icon-btn" id="open-sidebar" title="Mostrar notas (Ctrl+B)" aria-label="Mostrar notas">
+          <svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/></svg>
         </button>
-        <span class="brand">LockNote</span>
+
+        <nav class="crumbs" aria-label="Local">
+          <span class="crumb-root">LockNote</span>
+          <svg class="crumb-sep" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+          <span id="crumb-kind">Notas</span>
+          <svg class="crumb-sep" id="crumb-sep2" viewBox="0 0 24 24" hidden><path d="m9 18 6-6-6-6"/></svg>
+          <span class="crumb-current" id="crumb-title"></span>
+        </nav>
 
         <span class="spacer"></span>
 
         <div class="note-tools" id="note-tools" hidden>
-          <span id="status" class="status" aria-live="polite"></span>
-
-          <select id="language" aria-label="Linguagem" hidden>
-            <option value="">auto</option>
-            <option value="bash">bash</option>
-            <option value="c">c</option>
-            <option value="cpp">c++</option>
-            <option value="csharp">c#</option>
-            <option value="css">css</option>
-            <option value="go">go</option>
-            <option value="haskell">haskell</option>
-            <option value="xml">html</option>
-            <option value="java">java</option>
-            <option value="javascript">javascript</option>
-            <option value="json">json</option>
-            <option value="kotlin">kotlin</option>
-            <option value="markdown">markdown</option>
-            <option value="php">php</option>
-            <option value="plaintext">texto</option>
-            <option value="powershell">powershell</option>
-            <option value="python">python</option>
-            <option value="ruby">ruby</option>
-            <option value="rust">rust</option>
-            <option value="sql">sql</option>
-            <option value="swift">swift</option>
-            <option value="typescript">typescript</option>
-            <option value="yaml">yaml</option>
-          </select>
-
           <div class="kind-toggle" role="group" aria-label="Tipo da nota">
             <button data-kind="text" title="Texto" aria-label="Texto">
               <svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg>
@@ -88,35 +98,80 @@
               <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
             </button>
           </div>
-
-          <button class="icon-btn" id="copy" title="Copiar código" aria-label="Copiar código" hidden>
+          <span class="divider"></span>
+          <button class="icon-btn" id="copy-all" title="Copiar conteúdo" aria-label="Copiar conteúdo">
             <svg viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
           </button>
           <button class="icon-btn danger" id="delete" title="Excluir nota" aria-label="Excluir nota">
             <svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2"/></svg>
           </button>
         </div>
-
-        <button class="icon-btn" id="new-note" title="Nova nota" aria-label="Nova nota">
-          <svg viewBox="0 0 24 24"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/></svg>
-        </button>
       </header>
 
       <main class="page">
-        <div id="empty" class="empty">
-          <p>Nenhuma nota aberta.</p>
-          <button class="link-btn" id="empty-new">Criar uma nota</button>
-        </div>
-
-        <div id="editor" class="editor" hidden>
-          <input id="title" class="title" placeholder="Sem título" autocomplete="off">
-          <div id="content-wrap" class="content-wrap">
-            <pre id="highlight" aria-hidden="true"><code class="hljs"></code></pre>
-            <textarea id="content" placeholder="Comece a escrever…"></textarea>
+        <!-- Nenhuma nota aberta -->
+        <section id="empty" class="empty">
+          <div class="empty-icon">
+            <svg viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
           </div>
-        </div>
+          <h2>Nenhuma nota aberta</h2>
+          <p>Escolha uma nota na barra lateral ou comece uma nova.</p>
+          <div class="empty-actions">
+            <button class="card-btn" id="empty-text">
+              <span class="card-icon"><svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg></span>
+              <span><strong>Nota de texto</strong><small>Ideias, listas, rascunhos</small></span>
+            </button>
+            <button class="card-btn" id="empty-code">
+              <span class="card-icon code"><svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></span>
+              <span><strong>Nota de código</strong><small>Linguagem detectada sozinha</small></span>
+            </button>
+          </div>
+          <ul class="shortcuts">
+            <li><kbd>Ctrl</kbd><kbd>K</kbd> buscar</li>
+            <li><kbd>Ctrl</kbd><kbd>B</kbd> barra lateral</li>
+            <li><kbd>Ctrl</kbd><kbd>S</kbd> salvar</li>
+            <li><kbd>Alt</kbd><kbd>N</kbd> nova nota</li>
+          </ul>
+        </section>
+
+        <!-- Editor -->
+        <article id="editor" class="editor" hidden>
+          <input id="title" class="title" placeholder="Sem título" autocomplete="off" aria-label="Título">
+          <div class="meta">
+            <span class="pill" id="meta-kind"></span>
+            <span class="meta-item" id="meta-created"></span>
+            <span class="meta-item" id="meta-updated"></span>
+          </div>
+
+          <div class="sheet" id="sheet">
+            <div class="code-head" id="code-head">
+              <span class="dots"><i></i><i></i><i></i></span>
+              <span class="code-lang" id="code-lang">detectando…</span>
+              <button class="code-copy" id="copy-code">
+                <svg viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                <span>Copiar</span>
+              </button>
+            </div>
+            <div id="content-wrap" class="content-wrap">
+              <div class="gutter" id="gutter" aria-hidden="true"></div>
+              <pre id="highlight" aria-hidden="true"><code class="hljs"></code></pre>
+              <textarea id="content" placeholder="Comece a escrever…"></textarea>
+            </div>
+          </div>
+        </article>
       </main>
+
+      <footer class="statusbar" id="statusbar" hidden>
+        <span class="save-state" id="save-state" data-state="saved">
+          <span class="dot"></span><span id="status-text">Salvo</span>
+        </span>
+        <span class="spacer"></span>
+        <span id="stats"></span>
+        <span class="stat-lang" id="stat-lang"></span>
+      </footer>
     </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
   <script src="/app.js"></script>
 </body>

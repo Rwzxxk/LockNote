@@ -6,7 +6,17 @@ const $$ = (s) => document.querySelectorAll(s);
 const ICONS = {
   text: '<svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg>',
   code: '<svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+  clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+  calendar: '<svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg>',
 };
+
+const LANG_NAMES = {
+  bash: 'Bash', c: 'C', cpp: 'C++', csharp: 'C#', css: 'CSS', go: 'Go', haskell: 'Haskell',
+  java: 'Java', javascript: 'JavaScript', json: 'JSON', kotlin: 'Kotlin', markdown: 'Markdown',
+  php: 'PHP', powershell: 'PowerShell', python: 'Python', ruby: 'Ruby', rust: 'Rust', sql: 'SQL',
+  swift: 'Swift', typescript: 'TypeScript', xml: 'HTML/XML', yaml: 'YAML',
+};
+const langName = (l) => LANG_NAMES[l] || (l ? l : '');
 
 // ---------- API ----------
 async function request(method, url, body) {
@@ -33,6 +43,7 @@ const state = {
   query: '',
   saveTimer: null,
   dirty: false,
+  lineCount: 0,
 };
 
 const el = {
@@ -42,70 +53,162 @@ const el = {
   empty: $('#empty'),
   editor: $('#editor'),
   tools: $('#note-tools'),
+  statusbar: $('#statusbar'),
   title: $('#title'),
   content: $('#content'),
-  wrap: $('#content-wrap'),
+  sheet: $('#sheet'),
+  gutter: $('#gutter'),
   hl: $('#highlight'),
   hlCode: $('#highlight code'),
-  language: $('#language'),
-  status: $('#status'),
-  copy: $('#copy'),
+  codeLang: $('#code-lang'),
+  metaKind: $('#meta-kind'),
+  metaCreated: $('#meta-created'),
+  metaUpdated: $('#meta-updated'),
+  crumbKind: $('#crumb-kind'),
+  crumbSep2: $('#crumb-sep2'),
+  crumbTitle: $('#crumb-title'),
+  saveState: $('#save-state'),
+  statusText: $('#status-text'),
+  stats: $('#stats'),
+  statLang: $('#stat-lang'),
+  total: $('#total'),
+  toast: $('#toast'),
 };
 
-// ---------- Barra lateral ----------
-function openDrawer() {
-  el.app.classList.add('drawer-open');
-  setTimeout(() => el.search.focus(), 50);
-}
-function closeDrawer() {
-  el.app.classList.remove('drawer-open');
+// ---------- Utilidades ----------
+const isMobile = () => matchMedia('(max-width: 860px)').matches;
+
+function store(key, value) {
+  try {
+    if (value === undefined) return localStorage.getItem(key);
+    localStorage.setItem(key, value);
+  } catch { /* armazenamento indisponível: ignora */ }
+  return null;
 }
 
-// ---------- Lista ----------
+let toastTimer;
+function toast(msg) {
+  el.toast.textContent = msg;
+  el.toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.toast.classList.remove('show'), 1800);
+}
+
 function relTime(iso) {
   const d = new Date(iso);
   const diff = (Date.now() - d.getTime()) / 1000;
   if (diff < 60) return 'agora';
   if (diff < 3600) return `${Math.floor(diff / 60)} min`;
   if (diff < 86400) return `${Math.floor(diff / 3600)} h`;
-  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  if (diff < 7 * 86400) return d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).replace('.', '');
 }
 
-function renderList() {
-  const items = state.notes.filter((n) => state.filter === 'all' || n.kind === state.filter);
-  el.list.replaceChildren();
-  if (!items.length) {
-    const li = document.createElement('li');
-    li.className = 'list-empty';
-    li.textContent = state.query ? 'Nada encontrado.' : 'Nenhuma nota ainda.';
-    el.list.append(li);
-    return;
-  }
-  for (const n of items) {
-    const li = document.createElement('li');
-    if (state.current && state.current.id === n.id) li.classList.add('active');
-    li.title = n.kind === 'code' ? 'Código' : 'Texto';
+function fullDate(iso) {
+  return new Date(iso).toLocaleString('pt-BR', {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).replace('.', '');
+}
 
-    const icon = document.createElement('span');
-    icon.className = 'n-icon';
-    icon.innerHTML = ICONS[n.kind] || ICONS.text;
-
-    const title = document.createElement('span');
-    title.className = 'n-title' + (n.title ? '' : ' untitled');
-    title.textContent = n.title || firstLine(n.content) || 'Sem título';
-
-    const time = document.createElement('span');
-    time.className = 'n-time';
-    time.textContent = relTime(n.updatedAt);
-
-    li.append(icon, title, time);
-    li.addEventListener('click', () => openNote(n.id));
-    el.list.append(li);
-  }
+function groupOf(iso) {
+  const d = new Date(iso);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const day = new Date(d); day.setHours(0, 0, 0, 0);
+  const days = Math.round((today - day) / 86400000);
+  if (days <= 0) return 'Hoje';
+  if (days === 1) return 'Ontem';
+  if (days < 7) return 'Últimos 7 dias';
+  if (days < 30) return 'Últimos 30 dias';
+  return 'Mais antigas';
 }
 
 function firstLine(s) {
-  return (s.split('\n').find((l) => l.trim()) || '').trim().slice(0, 60);
+  return (s.split('\n').find((l) => l.trim()) || '').trim().slice(0, 120);
+}
+
+// ---------- Barra lateral ----------
+function toggleSidebar(force) {
+  if (isMobile()) {
+    const open = force ?? !el.app.classList.contains('drawer-open');
+    el.app.classList.toggle('drawer-open', open);
+  } else {
+    const collapsed = force === undefined ? !el.app.classList.contains('sidebar-collapsed') : !force;
+    el.app.classList.toggle('sidebar-collapsed', collapsed);
+    store('locknote.sidebarCollapsed', collapsed ? '1' : '0');
+  }
+}
+function closeDrawer() { el.app.classList.remove('drawer-open'); }
+
+function renderCounts() {
+  const all = state.notes.length;
+  const code = state.notes.filter((n) => n.kind === 'code').length;
+  $('[data-count="all"]').textContent = all;
+  $('[data-count="text"]').textContent = all - code;
+  $('[data-count="code"]').textContent = code;
+  if (!state.query) el.total.textContent = `${all} ${all === 1 ? 'nota' : 'notas'}`;
+}
+
+function renderList() {
+  renderCounts();
+  const items = state.notes.filter((n) => state.filter === 'all' || n.kind === state.filter);
+  el.list.replaceChildren();
+
+  if (!items.length) {
+    const p = document.createElement('div');
+    p.className = 'list-empty';
+    p.textContent = state.query ? `Nada encontrado para “${state.query}”.` : 'Nenhuma nota por aqui ainda.';
+    el.list.append(p);
+    return;
+  }
+
+  let lastGroup = null;
+  for (const n of items) {
+    const group = groupOf(n.updatedAt);
+    if (group !== lastGroup) {
+      const g = document.createElement('div');
+      g.className = 'group-label';
+      g.textContent = group;
+      el.list.append(g);
+      lastGroup = group;
+    }
+
+    const item = document.createElement('button');
+    item.className = 'note-item';
+    if (state.current && state.current.id === n.id) item.classList.add('active');
+
+    const icon = document.createElement('span');
+    icon.className = 'ni-icon' + (n.kind === 'code' ? ' code' : '');
+    icon.innerHTML = ICONS[n.kind] || ICONS.text;
+
+    const body = document.createElement('span');
+    body.className = 'ni-body';
+
+    const row = document.createElement('span');
+    row.className = 'ni-row';
+    const title = document.createElement('span');
+    title.className = 'ni-title' + (n.title ? '' : ' untitled');
+    title.textContent = n.title || 'Sem título';
+    const time = document.createElement('span');
+    time.className = 'ni-time';
+    time.textContent = relTime(n.updatedAt);
+    row.append(title, time);
+
+    const snippet = document.createElement('span');
+    snippet.className = 'ni-snippet' + (n.kind === 'code' ? ' mono' : '');
+    snippet.textContent = firstLine(n.content) || 'Vazia';
+
+    body.append(row, snippet);
+    if (n.kind === 'code' && n.language) {
+      const tag = document.createElement('span');
+      tag.className = 'ni-tag';
+      tag.textContent = langName(n.language);
+      body.append(tag);
+    }
+
+    item.append(icon, body);
+    item.addEventListener('click', () => openNote(n.id));
+    el.list.append(item);
+  }
 }
 
 async function loadNotes() {
@@ -114,8 +217,51 @@ async function loadNotes() {
   } catch (e) {
     console.error(e);
     state.notes = [];
+    toast('Não foi possível carregar as notas');
+  }
+  if (state.query) {
+    el.total.textContent = `${state.notes.length} resultado${state.notes.length === 1 ? '' : 's'}`;
   }
   renderList();
+}
+
+// ---------- Detecção de linguagem ----------
+// Linguagens consideradas na detecção estatística do highlight.js
+const LANGS = Object.keys(LANG_NAMES);
+
+// Sinais fortes, testados em ordem antes do palpite estatístico (que erra em trechos curtos)
+const RULES = [
+  ['bash',       /^#!.*\b(ba|z)?sh\b/],
+  ['python',     /^#!.*python/],
+  ['php',        /<\?php/],
+  ['xml',        /^\s*<(!doctype|html|\?xml|[a-z][\w-]*[\s>])/i],
+  ['go',         /^\s*package\s+\w+\s*$[\s\S]*\bfunc\b/m],
+  ['rust',       /\bfn\s+\w+\s*\(|\blet\s+mut\b|\w+!\(|\bimpl\b.*\{/],
+  ['java',       /\bpublic\s+(static\s+)?(class|void)\b|System\.out\./],
+  ['csharp',     /\busing\s+System\b|\bnamespace\s+[\w.]+|Console\.Write/],
+  ['cpp',        /#include\s*<(iostream|vector|string|map)>|\bstd::/],
+  ['c',          /#include\s*[<"]/],
+  ['haskell',    /^\w+\s*::\s*.+->|^\s*(module\s+[A-Z][\w.]*|import\s+(qualified\s+)?[A-Z][\w.]*)|^main\s*=\s*do\b|\bwhere\s*$/m],
+  ['sql',        /^\s*(select|insert\s+into|update\s+\w+\s+set|delete\s+from|create\s+(table|index|view)|alter\s+table|with\s+\w+\s+as)\b/im],
+  ['python',     /^\s*(def\s+\w+\s*\(.*\)\s*(->.*)?:|class\s+\w+.*:\s*$|from\s+[\w.]+\s+import\b|import\s+[\w.]+\s*$|if\s+__name__\s*==)|\bprint\(|\belif\b|\bself\./m],
+  ['powershell', /^\s*\$\w+\s*=|\b(Get|Set|New|Remove|Write)-[A-Z]\w+/m],
+  ['typescript', /\binterface\s+\w+\s*\{|:\s*(string|number|boolean)\b|\btype\s+\w+\s*=/],
+  ['javascript', /\b(const|let|var)\s+\w+\s*=|=>|\bfunction\b|console\.log|document\.|require\(/],
+  ['css',        /^\s*[.#@]?[\w-]+[^{]*\{\s*[\w-]+\s*:/m],
+  ['yaml',       /^[\w-]+:\s*.*$\n^\s+[\w-]+:/m],
+];
+
+function detectLanguage(text) {
+  const t = text.trim();
+  if (!t || !window.hljs) return '';
+  if (/^[{[]/.test(t)) {
+    try { JSON.parse(t); return 'json'; } catch { /* não é JSON */ }
+  }
+  for (const [lang, re] of RULES) {
+    if (re.test(t) && hljs.getLanguage(lang)) return lang;
+  }
+  const subset = LANGS.filter((l) => hljs.getLanguage(l));
+  return hljs.highlightAuto(t, subset).language || '';
 }
 
 // ---------- Editor ----------
@@ -126,41 +272,90 @@ function escapeHtml(s) {
 function renderHighlight() {
   if (!state.current || state.current.kind !== 'code') return;
   const text = el.content.value;
-  const lang = state.current.language;
-  let html;
-  if (window.hljs) {
-    html = lang && hljs.getLanguage(lang)
-      ? hljs.highlight(text, { language: lang, ignoreIllegals: true }).value
-      : hljs.highlightAuto(text).value;
-  } else {
-    html = escapeHtml(text); // sem internet: sem cores, mas funciona
-  }
+  const lang = detectLanguage(text);
+  const html = lang
+    ? hljs.highlight(text, { language: lang, ignoreIllegals: true }).value
+    : escapeHtml(text);
   // linha extra para o <pre> acompanhar o cursor na última linha vazia
   el.hlCode.innerHTML = html + '\n';
+  state.current.language = lang;
+  el.codeLang.textContent = lang ? langName(lang) : (text.trim() ? 'texto simples' : 'detectando…');
+  renderGutter();
   syncScroll();
+}
+
+function renderGutter() {
+  const lines = el.content.value.split('\n').length;
+  if (lines === state.lineCount) return;
+  state.lineCount = lines;
+  let s = '';
+  for (let i = 1; i <= lines; i++) s += i + '\n';
+  el.gutter.textContent = s;
 }
 
 function syncScroll() {
   el.hl.scrollTop = el.content.scrollTop;
   el.hl.scrollLeft = el.content.scrollLeft;
+  el.gutter.scrollTop = el.content.scrollTop;
+}
+
+function renderMeta() {
+  const c = state.current;
+  if (!c) return;
+  const isCode = c.kind === 'code';
+
+  el.metaKind.className = 'pill' + (isCode ? ' code' : '');
+  el.metaKind.innerHTML = ICONS[c.kind];
+  el.metaKind.append(isCode ? (c.language ? `Código · ${langName(c.language)}` : 'Código') : 'Texto');
+
+  el.metaCreated.innerHTML = ICONS.calendar;
+  el.metaCreated.append(`Criada em ${fullDate(c.createdAt)}`);
+  el.metaUpdated.innerHTML = ICONS.clock;
+  el.metaUpdated.append(`Editada ${relTime(c.updatedAt) === 'agora' ? 'agora' : 'há ' + relTime(c.updatedAt)}`);
+
+  el.crumbKind.textContent = isCode ? 'Código' : 'Texto';
+  el.crumbSep2.hidden = false;
+  el.crumbTitle.textContent = c.title || 'Sem título';
+}
+
+function renderStats() {
+  const c = state.current;
+  if (!c) return;
+  const text = el.content.value;
+  const chars = text.length.toLocaleString('pt-BR');
+  if (c.kind === 'code') {
+    el.stats.textContent = `${text.split('\n').length} linhas · ${chars} caracteres`;
+    el.statLang.textContent = c.language ? langName(c.language) : '';
+  } else {
+    const words = (text.match(/\S+/g) || []).length;
+    const mins = Math.max(1, Math.round(words / 200));
+    el.stats.textContent = `${words.toLocaleString('pt-BR')} palavras · ${chars} caracteres · ${mins} min de leitura`;
+    el.statLang.textContent = '';
+  }
 }
 
 function applyKind() {
   const isCode = state.current.kind === 'code';
   $$('.kind-toggle button').forEach((b) => b.classList.toggle('active', b.dataset.kind === state.current.kind));
-  el.wrap.classList.toggle('code', isCode);
-  el.language.hidden = !isCode;
-  el.copy.hidden = !isCode;
+  el.sheet.classList.toggle('code', isCode);
   el.content.spellcheck = !isCode;
-  el.content.placeholder = isCode ? '// cole ou escreva seu código' : 'Comece a escrever…';
-  el.language.value = state.current.language || '';
+  el.content.placeholder = isCode ? '// cole ou escreva seu código — a linguagem é detectada sozinha' : 'Comece a escrever…';
+  state.lineCount = 0;
   renderHighlight();
+  renderMeta();
+  renderStats();
 }
 
 function showEditor(show) {
   el.empty.hidden = show;
   el.editor.hidden = !show;
   el.tools.hidden = !show;
+  el.statusbar.hidden = !show;
+  if (!show) {
+    el.crumbKind.textContent = 'Notas';
+    el.crumbSep2.hidden = true;
+    el.crumbTitle.textContent = '';
+  }
 }
 
 async function openNote(id) {
@@ -171,32 +366,36 @@ async function openNote(id) {
   el.title.value = n.title;
   el.content.value = n.content;
   el.content.scrollTop = 0;
-  setStatus('');
+  setSaveState('saved');
   showEditor(true);
   applyKind();
   renderList();
   closeDrawer();
 }
 
-async function newNote() {
+async function newNote(kind) {
   await flushSave();
   try {
-    const kind = state.filter === 'code' ? 'code' : 'text';
     const n = await api.create({ title: '', content: '', kind, language: '' });
     state.notes.unshift(n);
+    if (state.filter !== 'all' && state.filter !== kind) setFilter('all');
     await openNote(n.id);
     el.title.focus();
   } catch (e) {
-    alert('Não foi possível criar a nota.');
+    toast('Não foi possível criar a nota');
   }
 }
 
 // ---------- Salvamento automático ----------
-function setStatus(text) { el.status.textContent = text; }
+const SAVE_LABELS = { saved: 'Salvo', editing: 'Editando…', saving: 'Salvando…', error: 'Erro ao salvar — tentando de novo' };
+function setSaveState(s) {
+  el.saveState.dataset.state = s;
+  el.statusText.textContent = SAVE_LABELS[s];
+}
 
 function scheduleSave() {
   state.dirty = true;
-  setStatus('');
+  setSaveState('editing');
   clearTimeout(state.saveTimer);
   state.saveTimer = setTimeout(save, 600);
 }
@@ -206,17 +405,24 @@ async function save() {
   if (!state.current || !state.dirty) return;
   state.dirty = false;
   const c = state.current;
-  setStatus('Salvando…');
+  setSaveState('saving');
   try {
     const saved = await api.update(c.id, {
       title: c.title, content: c.content, kind: c.kind, language: c.language,
     });
     state.notes = [saved, ...state.notes.filter((n) => n.id !== saved.id)];
-    if (state.current && state.current.id === saved.id) setStatus('Salvo');
+    if (state.current && state.current.id === saved.id) {
+      state.current.updatedAt = saved.updatedAt;
+      setSaveState('saved');
+      renderMeta();
+    }
     renderList();
   } catch (e) {
-    state.dirty = true;
-    setStatus('Erro ao salvar');
+    if (state.current && state.current.id === c.id) {
+      state.dirty = true;
+      setSaveState('error');
+      state.saveTimer = setTimeout(save, 3000);
+    }
   }
 }
 
@@ -224,15 +430,69 @@ async function flushSave() {
   if (state.dirty) await save();
 }
 
+// ---------- Ações ----------
+async function copyContent() {
+  try {
+    await navigator.clipboard.writeText(el.content.value);
+  } catch {
+    el.content.select();
+    document.execCommand('copy');
+  }
+  toast('Copiado para a área de transferência');
+}
+
+async function deleteCurrent() {
+  const c = state.current;
+  if (!c || !confirm(`Excluir “${c.title || 'Sem título'}”? Isso não pode ser desfeito.`)) return;
+  clearTimeout(state.saveTimer);
+  state.dirty = false;
+  try {
+    await api.remove(c.id);
+  } catch (e) {
+    toast('Não foi possível excluir a nota');
+    return;
+  }
+  state.notes = state.notes.filter((n) => n.id !== c.id);
+  state.current = null;
+  toast('Nota excluída');
+  if (state.notes.length) {
+    openNote(state.notes[0].id);
+  } else {
+    showEditor(false);
+    renderList();
+  }
+}
+
+function setFilter(f) {
+  state.filter = f;
+  $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.filter === f));
+  renderList();
+}
+
+function insertText(text) {
+  // execCommand mantém o desfazer (Ctrl+Z); setRangeText é o plano B
+  if (!document.execCommand('insertText', false, text)) {
+    el.content.setRangeText(text, el.content.selectionStart, el.content.selectionEnd, 'end');
+    el.content.dispatchEvent(new Event('input'));
+  }
+}
+
 // ---------- Eventos ----------
-$('#open-drawer').addEventListener('click', openDrawer);
-$('#close-drawer').addEventListener('click', closeDrawer);
+$('#collapse').addEventListener('click', () => toggleSidebar(false));
+$('#open-sidebar').addEventListener('click', () => toggleSidebar(true));
 $('#backdrop').addEventListener('click', closeDrawer);
-$('#new-note').addEventListener('click', newNote);
-$('#empty-new').addEventListener('click', newNote);
+$('#new-text').addEventListener('click', () => newNote('text'));
+$('#new-code').addEventListener('click', () => newNote('code'));
+$('#empty-text').addEventListener('click', () => newNote('text'));
+$('#empty-code').addEventListener('click', () => newNote('code'));
+$('#copy-all').addEventListener('click', copyContent);
+$('#copy-code').addEventListener('click', copyContent);
+$('#delete').addEventListener('click', deleteCurrent);
+$$('.tab').forEach((t) => t.addEventListener('click', () => setFilter(t.dataset.filter)));
 
 el.title.addEventListener('input', () => {
   state.current.title = el.title.value;
+  el.crumbTitle.textContent = el.title.value || 'Sem título';
   scheduleSave();
 });
 el.title.addEventListener('keydown', (e) => {
@@ -242,32 +502,10 @@ el.title.addEventListener('keydown', (e) => {
 el.content.addEventListener('input', () => {
   state.current.content = el.content.value;
   renderHighlight();
+  renderStats();
   scheduleSave();
 });
 el.content.addEventListener('scroll', syncScroll);
-
-el.language.addEventListener('change', () => {
-  state.current.language = el.language.value;
-  renderHighlight();
-  scheduleSave();
-});
-
-$$('.kind-toggle button').forEach((b) =>
-  b.addEventListener('click', () => {
-    if (!state.current || state.current.kind === b.dataset.kind) return;
-    state.current.kind = b.dataset.kind;
-    applyKind();
-    scheduleSave();
-  })
-);
-
-function insertText(text) {
-  // execCommand mantém o desfazer (Ctrl+Z); setRangeText é o plano B
-  if (!document.execCommand('insertText', false, text)) {
-    el.content.setRangeText(text, el.content.selectionStart, el.content.selectionEnd, 'end');
-    el.content.dispatchEvent(new Event('input'));
-  }
-}
 
 el.content.addEventListener('keydown', (e) => {
   if (state.current.kind !== 'code') return;
@@ -286,36 +524,15 @@ el.content.addEventListener('keydown', (e) => {
   }
 });
 
-el.copy.addEventListener('click', async () => {
-  try {
-    await navigator.clipboard.writeText(el.content.value);
-    setStatus('Copiado');
-  } catch {
-    el.content.select();
-    document.execCommand('copy');
-  }
-});
-
-$('#delete').addEventListener('click', async () => {
-  const c = state.current;
-  if (!c || !confirm(`Excluir "${c.title || 'Sem título'}"?`)) return;
-  clearTimeout(state.saveTimer);
-  state.dirty = false;
-  try {
-    await api.remove(c.id);
-  } catch (e) {
-    alert('Não foi possível excluir a nota.');
-    return;
-  }
-  state.notes = state.notes.filter((n) => n.id !== c.id);
-  state.current = null;
-  if (state.notes.length) {
-    openNote(state.notes[0].id);
-  } else {
-    showEditor(false);
-    renderList();
-  }
-});
+$$('.kind-toggle button').forEach((b) =>
+  b.addEventListener('click', () => {
+    if (!state.current || state.current.kind === b.dataset.kind) return;
+    state.current.kind = b.dataset.kind;
+    if (b.dataset.kind === 'text') state.current.language = '';
+    applyKind();
+    scheduleSave();
+  })
+);
 
 let searchTimer;
 el.search.addEventListener('input', () => {
@@ -326,22 +543,25 @@ el.search.addEventListener('input', () => {
     loadNotes();
   }, 250);
 });
-
-$$('.chip').forEach((c) =>
-  c.addEventListener('click', () => {
-    state.filter = c.dataset.filter;
-    $$('.chip').forEach((x) => x.classList.toggle('active', x === c));
-    renderList();
-  })
-);
+el.search.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && el.search.value) {
+    e.stopPropagation();
+    el.search.value = '';
+    el.search.dispatchEvent(new Event('input'));
+  }
+});
 
 document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
-  if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
-  else if (mod && e.key.toLowerCase() === 'b') {
+  const key = e.key.toLowerCase();
+  if (mod && key === 's') { e.preventDefault(); save(); }
+  else if (mod && key === 'b') { e.preventDefault(); toggleSidebar(); }
+  else if (mod && key === 'k') {
     e.preventDefault();
-    el.app.classList.contains('drawer-open') ? closeDrawer() : openDrawer();
+    if (isMobile()) toggleSidebar(true);
+    else { toggleSidebar(true); el.search.focus(); el.search.select(); }
   }
+  else if (e.altKey && key === 'n') { e.preventDefault(); newNote('text'); }
   else if (e.key === 'Escape') closeDrawer();
 });
 
@@ -352,7 +572,11 @@ window.addEventListener('beforeunload', (e) => {
   }
 });
 
-// Ao abrir, mostra a nota mais recente
+// Atualiza os tempos relativos ("há 3 min") a cada minuto
+setInterval(() => { renderList(); renderMeta(); }, 60000);
+
+// ---------- Início ----------
+if (store('locknote.sidebarCollapsed') === '1' && !isMobile()) el.app.classList.add('sidebar-collapsed');
 loadNotes().then(() => {
   if (state.notes.length) openNote(state.notes[0].id);
 });
