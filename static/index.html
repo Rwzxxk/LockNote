@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Bloco de Notas</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar">
+      <header class="sidebar-head">
+        <h1>Notas</h1>
+        <div class="new-buttons">
+          <button id="new-text" class="btn primary" title="Nova nota de texto">+ Texto</button>
+          <button id="new-code" class="btn" title="Nova nota de código">+ Código</button>
+        </div>
+      </header>
+      <input id="search" class="search" type="search" placeholder="Buscar notas…" autocomplete="off">
+      <div class="filters">
+        <button class="chip active" data-filter="all">Todas</button>
+        <button class="chip" data-filter="text">Texto</button>
+        <button class="chip" data-filter="code">Código</button>
+      </div>
+      <ul id="note-list" class="note-list"></ul>
+    </aside>
+
+    <main class="editor">
+      <div id="empty" class="empty">
+        <p>Selecione uma nota ou crie uma nova.</p>
+      </div>
+
+      <div id="editor-inner" class="editor-inner" hidden>
+        <div class="toolbar">
+          <button id="back" class="btn ghost back" aria-label="Voltar para a lista">← Notas</button>
+          <div class="seg" role="group" aria-label="Tipo da nota">
+            <button data-kind="text">Texto</button>
+            <button data-kind="code">Código</button>
+          </div>
+          <select id="language" aria-label="Linguagem">
+            <option value="">Detectar</option>
+            <option value="bash">Bash</option>
+            <option value="c">C</option>
+            <option value="cpp">C++</option>
+            <option value="csharp">C#</option>
+            <option value="css">CSS</option>
+            <option value="go">Go</option>
+            <option value="haskell">Haskell</option>
+            <option value="xml">HTML/XML</option>
+            <option value="java">Java</option>
+            <option value="javascript">JavaScript</option>
+            <option value="json">JSON</option>
+            <option value="kotlin">Kotlin</option>
+            <option value="markdown">Markdown</option>
+            <option value="php">PHP</option>
+            <option value="plaintext">Texto puro</option>
+            <option value="powershell">PowerShell</option>
+            <option value="python">Python</option>
+            <option value="ruby">Ruby</option>
+            <option value="rust">Rust</option>
+            <option value="sql">SQL</option>
+            <option value="swift">Swift</option>
+            <option value="typescript">TypeScript</option>
+            <option value="yaml">YAML</option>
+          </select>
+          <span id="status" class="status" aria-live="polite"></span>
+          <span class="spacer"></span>
+          <button id="copy" class="btn ghost">Copiar</button>
+          <button id="delete" class="btn danger">Excluir</button>
+        </div>
+
+        <input id="title" class="title" placeholder="Título" autocomplete="off">
+
+        <div id="content-wrap" class="content-wrap">
+          <pre id="highlight" aria-hidden="true"><code class="hljs"></code></pre>
+          <textarea id="content" placeholder="Escreva aqui…"></textarea>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

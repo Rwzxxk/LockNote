@@ -1,0 +1,225 @@
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --fg: #1d2330;
+  --muted: #6b7385;
+  --border: #e3e6ec;
+  --accent: #3563e9;
+  --accent-fg: #ffffff;
+  --accent-soft: #e8eefd;
+  --danger: #c93838;
+  --code-bg: #f3f4f7;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1218;
+    --panel: #161a22;
+    --fg: #e4e7ee;
+    --muted: #8a92a5;
+    --border: #262c38;
+    --accent: #6b8cff;
+    --accent-fg: #0f1218;
+    --accent-soft: #1d2640;
+    --danger: #ff6b6b;
+    --code-bg: #0d1117;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 var(--sans);
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+
+.app {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* ---------- Barra lateral ---------- */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  min-height: 0;
+}
+.sidebar-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sidebar-head h1 { font-size: 20px; margin: 0; }
+.new-buttons { display: flex; gap: 6px; }
+
+.search {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.search:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.filters { display: flex; gap: 6px; }
+.chip {
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.chip.active { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+
+.note-list { list-style: none; margin: 0 -8px; padding: 0; overflow-y: auto; flex: 1; }
+.note-list li {
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: grid;
+  gap: 2px;
+}
+.note-list li:hover { background: var(--bg); }
+.note-list li.active { background: var(--accent-soft); }
+.note-list .n-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-list .n-snippet {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.note-list .n-snippet.mono { font-family: var(--mono); font-size: 12px; }
+.note-list .n-meta { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+.badge {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+}
+.list-empty { color: var(--muted); padding: 12px; font-size: 14px; cursor: default !important; }
+
+/* ---------- Botões ---------- */
+.btn {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.btn.ghost { background: transparent; }
+.btn.danger { color: var(--danger); background: transparent; }
+.btn.danger:hover { border-color: var(--danger); }
+
+/* ---------- Editor ---------- */
+.editor { min-width: 0; min-height: 0; display: flex; }
+.empty { margin: auto; color: var(--muted); }
+.editor-inner {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 24px 24px;
+  min-height: 0;
+}
+.editor-inner[hidden] { display: none; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.toolbar .spacer { flex: 1; }
+.back { display: none; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; background: transparent; padding: 6px 12px; cursor: pointer; color: var(--muted); }
+.seg button.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+#language {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+#language[hidden] { display: none; }
+.status { font-size: 13px; color: var(--muted); }
+
+.title {
+  border: 0;
+  background: transparent;
+  font-size: 24px;
+  font-weight: 700;
+  padding: 4px 0;
+  outline: none;
+  width: 100%;
+}
+
+.content-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.content-wrap textarea,
+.content-wrap pre {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 16px;
+  border: 0;
+  width: 100%;
+  height: 100%;
+}
+.content-wrap textarea {
+  resize: none;
+  outline: none;
+  background: transparent;
+  line-height: 1.6;
+  z-index: 1;
+}
+.content-wrap pre { display: none; }
+
+/* Modo código: textarea transparente sobre o <pre> destacado */
+.content-wrap.code { background: var(--code-bg); }
+.content-wrap.code pre { display: block; overflow: hidden; pointer-events: none; }
+.content-wrap.code textarea,
+.content-wrap.code pre,
+.content-wrap.code pre code {
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.55;
+  tab-size: 4;
+  white-space: pre;
+  word-wrap: normal;
+}
+.content-wrap.code textarea {
+  color: transparent;
+  caret-color: var(--fg);
+  overflow: auto;
+}
+.content-wrap.code textarea::selection { background: rgba(53, 99, 233, .3); }
+.content-wrap.code pre code.hljs { padding: 0; background: transparent; display: block; overflow: visible; }
+
+/* ---------- Celular ---------- */
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr; }
+  .app.show-editor .sidebar { display: none; }
+  .app:not(.show-editor) .editor { display: none; }
+  .sidebar { border-right: 0; }
+  .editor-inner { padding: 12px 16px 16px; }
+  .back { display: inline-block; padding-left: 4px; }
+  .title { font-size: 20px; }
+  .content-wrap.code textarea,
+  .content-wrap.code pre,
+  .content-wrap.code pre code { font-size: 13px; }
+}

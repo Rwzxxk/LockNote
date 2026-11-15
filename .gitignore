@@ -1,0 +1,4 @@
+dist-newstyle/
+notes.db
+notes.db-*
+.claude/
