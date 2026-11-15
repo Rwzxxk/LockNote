@@ -3,6 +3,11 @@
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
 
+const ICONS = {
+  text: '<svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg>',
+  code: '<svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+};
+
 // ---------- API ----------
 async function request(method, url, body) {
   const res = await fetch(url, {
@@ -35,7 +40,8 @@ const el = {
   list: $('#note-list'),
   search: $('#search'),
   empty: $('#empty'),
-  editor: $('#editor-inner'),
+  editor: $('#editor'),
+  tools: $('#note-tools'),
   title: $('#title'),
   content: $('#content'),
   wrap: $('#content-wrap'),
@@ -45,6 +51,15 @@ const el = {
   status: $('#status'),
   copy: $('#copy'),
 };
+
+// ---------- Barra lateral ----------
+function openDrawer() {
+  el.app.classList.add('drawer-open');
+  setTimeout(() => el.search.focus(), 50);
+}
+function closeDrawer() {
+  el.app.classList.remove('drawer-open');
+}
 
 // ---------- Lista ----------
 function relTime(iso) {
@@ -56,49 +71,41 @@ function relTime(iso) {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
 }
 
-function languageLabel(value) {
-  const opt = [...el.language.options].find((o) => o.value === value);
-  return opt && value ? opt.textContent : 'código';
-}
-
 function renderList() {
   const items = state.notes.filter((n) => state.filter === 'all' || n.kind === state.filter);
   el.list.replaceChildren();
   if (!items.length) {
     const li = document.createElement('li');
     li.className = 'list-empty';
-    li.textContent = state.query ? 'Nenhuma nota encontrada.' : 'Nenhuma nota ainda.';
+    li.textContent = state.query ? 'Nada encontrado.' : 'Nenhuma nota ainda.';
     el.list.append(li);
     return;
   }
   for (const n of items) {
     const li = document.createElement('li');
     if (state.current && state.current.id === n.id) li.classList.add('active');
+    li.title = n.kind === 'code' ? 'Código' : 'Texto';
 
-    const title = document.createElement('div');
-    title.className = 'n-title';
-    title.textContent = n.title || 'Sem título';
+    const icon = document.createElement('span');
+    icon.className = 'n-icon';
+    icon.innerHTML = ICONS[n.kind] || ICONS.text;
 
-    const snippet = document.createElement('div');
-    snippet.className = 'n-snippet' + (n.kind === 'code' ? ' mono' : '');
-    snippet.textContent = n.content.split('\n').find((l) => l.trim()) || '—';
+    const title = document.createElement('span');
+    title.className = 'n-title' + (n.title ? '' : ' untitled');
+    title.textContent = n.title || firstLine(n.content) || 'Sem título';
 
-    const meta = document.createElement('div');
-    meta.className = 'n-meta';
-    if (n.kind === 'code') {
-      const b = document.createElement('span');
-      b.className = 'badge';
-      b.textContent = languageLabel(n.language);
-      meta.append(b);
-    }
-    const t = document.createElement('span');
-    t.textContent = relTime(n.updatedAt);
-    meta.append(t);
+    const time = document.createElement('span');
+    time.className = 'n-time';
+    time.textContent = relTime(n.updatedAt);
 
-    li.append(title, snippet, meta);
+    li.append(icon, title, time);
     li.addEventListener('click', () => openNote(n.id));
     el.list.append(li);
   }
+}
+
+function firstLine(s) {
+  return (s.split('\n').find((l) => l.trim()) || '').trim().slice(0, 60);
 }
 
 async function loadNotes() {
@@ -128,7 +135,7 @@ function renderHighlight() {
   } else {
     html = escapeHtml(text); // sem internet: sem cores, mas funciona
   }
-  // O <pre> precisa de uma linha extra para acompanhar o cursor na última linha vazia
+  // linha extra para o <pre> acompanhar o cursor na última linha vazia
   el.hlCode.innerHTML = html + '\n';
   syncScroll();
 }
@@ -140,12 +147,12 @@ function syncScroll() {
 
 function applyKind() {
   const isCode = state.current.kind === 'code';
-  $$('.seg button').forEach((b) => b.classList.toggle('active', b.dataset.kind === state.current.kind));
+  $$('.kind-toggle button').forEach((b) => b.classList.toggle('active', b.dataset.kind === state.current.kind));
   el.wrap.classList.toggle('code', isCode);
   el.language.hidden = !isCode;
   el.copy.hidden = !isCode;
   el.content.spellcheck = !isCode;
-  el.content.placeholder = isCode ? '// cole ou escreva seu código aqui' : 'Escreva aqui…';
+  el.content.placeholder = isCode ? '// cole ou escreva seu código' : 'Comece a escrever…';
   el.language.value = state.current.language || '';
   renderHighlight();
 }
@@ -153,7 +160,7 @@ function applyKind() {
 function showEditor(show) {
   el.empty.hidden = show;
   el.editor.hidden = !show;
-  el.app.classList.toggle('show-editor', show);
+  el.tools.hidden = !show;
 }
 
 async function openNote(id) {
@@ -165,17 +172,18 @@ async function openNote(id) {
   el.content.value = n.content;
   el.content.scrollTop = 0;
   setStatus('');
-  applyKind();
   showEditor(true);
+  applyKind();
   renderList();
+  closeDrawer();
 }
 
-async function newNote(kind) {
+async function newNote() {
   await flushSave();
   try {
+    const kind = state.filter === 'code' ? 'code' : 'text';
     const n = await api.create({ title: '', content: '', kind, language: '' });
     state.notes.unshift(n);
-    if (state.filter !== 'all' && state.filter !== kind) setFilter('all');
     await openNote(n.id);
     el.title.focus();
   } catch (e) {
@@ -188,7 +196,7 @@ function setStatus(text) { el.status.textContent = text; }
 
 function scheduleSave() {
   state.dirty = true;
-  setStatus('Editando…');
+  setStatus('');
   clearTimeout(state.saveTimer);
   state.saveTimer = setTimeout(save, 600);
 }
@@ -217,12 +225,18 @@ async function flushSave() {
 }
 
 // ---------- Eventos ----------
-$('#new-text').addEventListener('click', () => newNote('text'));
-$('#new-code').addEventListener('click', () => newNote('code'));
+$('#open-drawer').addEventListener('click', openDrawer);
+$('#close-drawer').addEventListener('click', closeDrawer);
+$('#backdrop').addEventListener('click', closeDrawer);
+$('#new-note').addEventListener('click', newNote);
+$('#empty-new').addEventListener('click', newNote);
 
 el.title.addEventListener('input', () => {
   state.current.title = el.title.value;
   scheduleSave();
+});
+el.title.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); el.content.focus(); }
 });
 
 el.content.addEventListener('input', () => {
@@ -238,9 +252,9 @@ el.language.addEventListener('change', () => {
   scheduleSave();
 });
 
-$$('.seg button').forEach((b) =>
+$$('.kind-toggle button').forEach((b) =>
   b.addEventListener('click', () => {
-    if (state.current.kind === b.dataset.kind) return;
+    if (!state.current || state.current.kind === b.dataset.kind) return;
     state.current.kind = b.dataset.kind;
     applyKind();
     scheduleSave();
@@ -275,7 +289,7 @@ el.content.addEventListener('keydown', (e) => {
 el.copy.addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(el.content.value);
-    setStatus('Copiado!');
+    setStatus('Copiado');
   } catch {
     el.content.select();
     document.execCommand('copy');
@@ -295,13 +309,12 @@ $('#delete').addEventListener('click', async () => {
   }
   state.notes = state.notes.filter((n) => n.id !== c.id);
   state.current = null;
-  showEditor(false);
-  renderList();
-});
-
-$('#back').addEventListener('click', async () => {
-  await flushSave();
-  el.app.classList.remove('show-editor');
+  if (state.notes.length) {
+    openNote(state.notes[0].id);
+  } else {
+    showEditor(false);
+    renderList();
+  }
 });
 
 let searchTimer;
@@ -314,18 +327,22 @@ el.search.addEventListener('input', () => {
   }, 250);
 });
 
-function setFilter(f) {
-  state.filter = f;
-  $$('.chip').forEach((c) => c.classList.toggle('active', c.dataset.filter === f));
-  renderList();
-}
-$$('.chip').forEach((c) => c.addEventListener('click', () => setFilter(c.dataset.filter)));
+$$('.chip').forEach((c) =>
+  c.addEventListener('click', () => {
+    state.filter = c.dataset.filter;
+    $$('.chip').forEach((x) => x.classList.toggle('active', x === c));
+    renderList();
+  })
+);
 
 document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
+  else if (mod && e.key.toLowerCase() === 'b') {
     e.preventDefault();
-    save();
+    el.app.classList.contains('drawer-open') ? closeDrawer() : openDrawer();
   }
+  else if (e.key === 'Escape') closeDrawer();
 });
 
 window.addEventListener('beforeunload', (e) => {
@@ -335,4 +352,7 @@ window.addEventListener('beforeunload', (e) => {
   }
 });
 
-loadNotes();
+// Ao abrir, mostra a nota mais recente
+loadNotes().then(() => {
+  if (state.notes.length) openNote(state.notes[0].id);
+});
