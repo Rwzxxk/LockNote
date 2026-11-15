@@ -1,20 +1,43 @@
 cabal-version:      3.0
+-- Arquivo de projeto do Cabal (o gerenciador de pacotes/build do Haskell).
+-- Ele diz o nome do programa, onde está o código e de quais bibliotecas
+-- ele depende. "cabal build" lê este arquivo, baixa as dependências do
+-- Hackage (o repositório oficial de pacotes Haskell) e compila tudo.
+
 name:               notas
 version:            0.1.0.0
-synopsis:           Bloco de notas com suporte a texto e código
+synopsis:           LockNote: bloco de notas com suporte a texto e código
 build-type:         Simple
 
+-- O projeto gera um executável chamado "notas" (rode com: cabal run notas).
 executable notas
+    -- Arquivo com a função main, dentro da pasta app/.
     main-is:          Main.hs
     hs-source-dirs:   app
     default-language: Haskell2010
+
+    -- Opções do compilador GHC:
+    --   -Wall      liga todos os avisos (ajuda a pegar erros cedo)
+    --   -threaded  usa o runtime multithread, para atender várias
+    --              requisições HTTP ao mesmo tempo
+    --   -rtsopts   permite ajustar o runtime pela linha de comando
     ghc-options:      -Wall -threaded -rtsopts
+
+    -- Bibliotecas usadas (com versão mínima):
     build-depends:
+        -- biblioteca padrão do Haskell
         base                  >=4.18 && <5,
+        -- conversão de/para JSON
         aeson                 >=2.1,
+        -- tipo Text (texto Unicode eficiente)
         text                  >=2.0,
+        -- datas e horários (created_at / updated_at)
         time                  >=1.12,
+        -- códigos de status HTTP (200, 404...)
         http-types            >=0.12,
+        -- framework web (rotas, JSON, servidor Warp)
         scotty                >=0.22,
+        -- banco SQLite (o SQLite vem embutido)
         sqlite-simple         >=0.4.19,
+        -- serve os arquivos do front-end (pasta static/)
         wai-middleware-static >=0.9
