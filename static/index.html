@@ -30,6 +30,7 @@
             <div class="account-panel" role="group" aria-label="Opções de conta">
               <button type="button" id="guest-login">Login</button>
               <button type="button" id="guest-register">Cadastre-se</button>
+              <button type="button" id="account-logout" hidden>Sair</button>
             </div>
           </details>
           <span class="logo-name">LockNote</span>
@@ -77,7 +78,7 @@
             <span class="sb-avatar" aria-hidden="true">
               <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M5 20v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/></svg>
             </span>
-            <span>Visitante</span>
+            <span id="account-name">Visitante</span>
           </div>
         </div>
         <div class="sb-storage">
@@ -206,6 +207,18 @@
       </div>
     </form>
   </dialog>
-  <script src="/app.js?v=registration"></script>
+  <dialog id="login" class="registration" aria-labelledby="login-title">
+    <form id="login-form">
+      <h2 id="login-title">Login</h2>
+      <label>Nome de usuário ou e-mail <input name="identifier" autocomplete="username" maxlength="254" required></label>
+      <label>Senha <input name="password" type="password" autocomplete="current-password" maxlength="128" required></label>
+      <p id="login-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="login-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Entrar</button>
+      </div>
+    </form>
+  </dialog>
+  <script src="/app.js?v=login"></script>
 </body>
 </html>

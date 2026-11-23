@@ -54,18 +54,22 @@ module Main (main) where
 -- obriga a escrever T.strip, T.null etc., o que evita conflito de nomes.
 
 import Data.Aeson                     -- JSON: ToJSON, FromJSON, object, (.=) ...
+import Crypto.Hash (Digest, SHA256, hash)
 import Crypto.KDF.PBKDF2 (Parameters(..), fastPBKDF2_SHA256)
 import Crypto.Random (getRandomBytes)
+import Data.ByteArray (constEq)
+import Data.ByteArray.Encoding (Base(Base16), convertToBase)
 import qualified Data.ByteString as BS
 import Data.Char (isAsciiLower, isDigit)
+import Data.List (find)
 import Data.Maybe (fromMaybe)         -- fromMaybe padrao x: usa o padrão quando x é Nothing
 import Data.Text (Text)               -- tipo de texto eficiente (Unicode)
 import qualified Data.Text as T       -- funções sobre Text (strip, null ...)
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Lazy as TL -- Text "preguiçoso", usado pelo Scotty
-import Data.Time (UTCTime, getCurrentTime)   -- datas e hora atual (UTC)
+import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Database.SQLite.Simple                -- Connection, query, execute ...
-import Network.HTTP.Types.Status (status201, status204, status400, status404, status409)
+import Network.HTTP.Types.Status (status201, status204, status400, status401, status404, status409)
 import Network.Wai.Middleware.Static (addBase, noDots, staticPolicy, (>->))
 import System.Environment (lookupEnv) -- lê variáveis de ambiente (PORT, NOTES_DB)
 import Text.Read (readMaybe)          -- converte texto em número sem quebrar se for inválido
@@ -225,6 +229,59 @@ validRegistrationEmail email = T.length email <= 254 && case T.splitOn "@" email
       && letterOrDigit (T.last label)
       && T.all (\ch -> letterOrDigit ch || ch == '-') label
 
+data Login = Login Text Text
+
+instance FromJSON Login where
+  parseJSON = withObject "Login" $ \o -> Login <$> o .: "identifier" <*> o .: "password"
+
+startSession :: FilePath -> Login -> ActionM ()
+startSession dbPath (Login rawIdentifier password)
+  | T.null identifier || T.length identifier > 254 || T.null password || T.length password > 128 = denied
+  | otherwise = do
+      session <- liftIO $ withConnection dbPath $ \c -> do
+        accounts <- query c
+          "SELECT id, username, password_salt, password_hash, password_iterations FROM accounts WHERE email = ? OR username = ? ORDER BY email = ? DESC"
+          (email, identifier, email) :: IO [(Int, Text, BS.ByteString, BS.ByteString, Int)]
+        case find matches accounts of
+          Nothing -> pure Nothing
+          Just (accountId, username, _, _, _) -> do
+            token <- TE.decodeUtf8 . (convertToBase Base16 :: BS.ByteString -> BS.ByteString) <$> getRandomBytes 32
+            now <- getCurrentTime
+            execute c "DELETE FROM sessions WHERE expires_at <= ?" (Only now)
+            execute c "INSERT INTO sessions (token_hash, account_id, expires_at) VALUES (?,?,?)"
+              (sessionHash token, accountId, addUTCTime (fromIntegral sessionLifetime) now)
+            pure (Just (token, username))
+      case session of
+        Nothing -> denied
+        Just (token, username) -> do
+          setSessionCookie token sessionLifetime
+          json (object ["username" .= username])
+  where
+    identifier = T.strip rawIdentifier
+    email = T.toLower identifier
+    matches (_, _, salt, expected, iterations) =
+      constEq expected (fastPBKDF2_SHA256 (Parameters iterations (BS.length expected)) (TE.encodeUtf8 password) salt :: BS.ByteString)
+    denied = status status401 >> jsonError "Usuário, e-mail ou senha incorretos."
+
+sessionLifetime :: Int
+sessionLifetime = 7 * 24 * 60 * 60
+
+sessionHash :: Text -> BS.ByteString
+sessionHash token = convertToBase Base16 (hash (TE.encodeUtf8 token) :: Digest SHA256)
+
+setSessionCookie :: Text -> Int -> ActionM ()
+setSessionCookie token maxAge = setHeader "Set-Cookie" $ TL.fromStrict $
+  "locknote_session=" <> token <> "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" <> T.pack (show maxAge)
+
+sessionToken :: ActionM (Maybe Text)
+sessionToken = do
+  cookies <- header "Cookie"
+  pure $ cookies >>= \value ->
+    let fields = map T.strip (T.splitOn ";" (TL.toStrict value))
+    in case [token | cookie <- fields, Just token <- [T.stripPrefix "locknote_session=" cookie], T.length token == 64] of
+      [token] -> Just token
+      _ -> Nothing
+
 -- ============================================================================
 --  BANCO DE DADOS
 -- ============================================================================
@@ -248,6 +305,8 @@ initDb c = do
   execute_ c "PRAGMA journal_mode = WAL"
   execute_ c
     "CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, username TEXT NOT NULL COLLATE NOCASE UNIQUE, password_salt BLOB NOT NULL, password_hash BLOB NOT NULL, password_iterations INTEGER NOT NULL)"
+  execute_ c
+    "CREATE TABLE IF NOT EXISTS sessions (token_hash BLOB PRIMARY KEY NOT NULL, account_id INTEGER NOT NULL REFERENCES accounts(id), expires_at TEXT NOT NULL)"
 
   -- Cria a tabela só se ela ainda não existir ("IF NOT EXISTS").
   -- As barras invertidas no fim/início das linhas são a forma do Haskell
@@ -437,6 +496,30 @@ main = do
     middleware $ staticPolicy (noDots >-> addBase "static")
 
     post "/api/accounts" $ jsonData >>= registerAccount dbPath
+
+    post "/api/session" $ do
+      setHeader "Cache-Control" "no-store"
+      jsonData >>= startSession dbPath
+
+    get "/api/session" $ do
+      setHeader "Cache-Control" "no-store"
+      token <- sessionToken
+      users <- case token of
+        Nothing -> pure []
+        Just value -> db $ \c -> do
+          now <- getCurrentTime
+          query c "SELECT username FROM sessions JOIN accounts ON accounts.id = sessions.account_id WHERE token_hash = ? AND expires_at > ?"
+            (sessionHash value, now)
+      let username = case users of
+            [Only name] -> Just (name :: Text)
+            _ -> Nothing
+      json (object ["username" .= username])
+
+    delete "/api/session" $ do
+      token <- sessionToken
+      mapM_ (\value -> db $ \c -> execute c "DELETE FROM sessions WHERE token_hash = ?" (Only (sessionHash value))) token
+      setSessionCookie "" 0
+      status status204
 
     -- Página principal: devolve o index.html do front-end.
     get "/" $ do

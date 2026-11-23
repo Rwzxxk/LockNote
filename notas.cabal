@@ -30,7 +30,8 @@ executable notas
         -- conversão de/para JSON
         aeson                 >=2.1,
         bytestring,
-        crypton               >=1.0,
+        crypton               >=2.3,
+        ram                   >=0.22,
         -- tipo Text (texto Unicode eficiente)
         text                  >=2.0,
         -- datas e horários (created_at / updated_at)

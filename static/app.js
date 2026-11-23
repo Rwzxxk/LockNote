@@ -506,7 +506,85 @@ document.addEventListener('click', (e) => {
 $('#collapse').addEventListener('click', () => toggleSidebar(false));
 $('#open-sidebar').addEventListener('click', () => toggleSidebar(true));
 $('#backdrop').addEventListener('click', closeDrawer);
-$('#guest-login').addEventListener('click', () => toast('Login ainda indisponível'));
+const login = $('#login');
+const loginForm = $('#login-form');
+const loginError = $('#login-error');
+const loginSubmit = loginForm.querySelector('[type="submit"]');
+const loginCancel = $('#login-cancel');
+const loginButton = $('#guest-login');
+const registerButton = $('#guest-register');
+const logoutButton = $('#account-logout');
+let accountUsername;
+
+function renderAccount(username) {
+  accountUsername = username;
+  $('#account-name').textContent = username || 'Visitante';
+  loginButton.hidden = registerButton.hidden = Boolean(username);
+  logoutButton.hidden = !username;
+}
+
+function showLoginError(message) {
+  loginError.textContent = message;
+  loginError.hidden = !message;
+}
+
+loginButton.addEventListener('click', () => {
+  accountControl.open = false;
+  loginForm.reset();
+  showLoginError('');
+  login.showModal();
+});
+loginCancel.addEventListener('click', () => login.close());
+login.addEventListener('close', () => {
+  loginForm.reset();
+  accountToggle.focus();
+});
+login.addEventListener('cancel', (event) => {
+  if (loginSubmit.disabled) event.preventDefault();
+});
+loginForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (loginSubmit.disabled) return;
+  const data = Object.fromEntries(new FormData(loginForm));
+  showLoginError('');
+  loginSubmit.disabled = loginCancel.disabled = true;
+  try {
+    const response = await fetch('/api/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      showLoginError(error?.error || 'Não foi possível fazer login.');
+      return;
+    }
+    const { username } = await response.json();
+    renderAccount(username);
+    login.close();
+  } catch {
+    showLoginError('Não foi possível conectar ao servidor.');
+  } finally {
+    loginSubmit.disabled = loginCancel.disabled = false;
+  }
+});
+logoutButton.addEventListener('click', async () => {
+  logoutButton.disabled = true;
+  try {
+    await request('DELETE', '/api/session');
+    renderAccount(null);
+    accountControl.open = false;
+    accountToggle.focus();
+  } catch {
+    toast('Não foi possível sair da conta');
+  } finally {
+    logoutButton.disabled = false;
+  }
+});
+
+request('GET', '/api/session').then(({ username }) => {
+  if (accountUsername === undefined) renderAccount(username);
+}).catch(() => {});
 const registration = $('#registration');
 const registrationForm = $('#registration-form');
 const registrationError = $('#registration-error');
@@ -518,7 +596,7 @@ function showRegistrationError(message) {
   registrationError.hidden = !message;
 }
 
-$('#guest-register').addEventListener('click', () => {
+registerButton.addEventListener('click', () => {
   accountControl.open = false;
   registrationForm.reset();
   showRegistrationError('');
@@ -636,7 +714,7 @@ el.search.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (registration.open) return;
+  if (registration.open || login.open) return;
   if (e.key === 'Escape' && accountControl.open) {
     accountControl.open = false;
     accountToggle.focus();
