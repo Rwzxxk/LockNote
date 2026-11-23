@@ -22,9 +22,18 @@
     <aside class="sidebar" id="sidebar" aria-label="Notas">
       <div class="sb-head">
         <div class="logo">
-          <span class="logo-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          </span>
+          <details class="account-control" id="account-control">
+            <summary class="logo-mark" id="account-toggle" aria-label="Opções de conta">
+              <svg class="logo-lock" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <svg class="logo-avatar" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 20v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/></svg>
+            </summary>
+            <div class="account-panel" role="group" aria-label="Opções de conta">
+              <button type="button" id="guest-login">Login</button>
+              <button type="button" id="guest-register">Cadastre-se</button>
+              <button type="button" id="account-logout" hidden>Sair</button>
+              <button type="button" id="account-edit" hidden>Editar conta</button>
+            </div>
+          </details>
           <span class="logo-name">LockNote</span>
         </div>
         <button class="icon-btn" id="collapse" title="Recolher barra lateral (Ctrl+B)" aria-label="Recolher barra lateral">
@@ -70,6 +79,12 @@
       <div class="note-list" id="note-list"></div>
 
       <footer class="sb-foot">
+        <div class="sb-account">
+          <div class="sb-guest">
+            <span class="sb-avatar" id="sidebar-avatar" aria-hidden="true">🐱</span>
+            <span id="account-name">Visitante</span>
+          </div>
+        </div>
         <div class="sb-storage">
           <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
           <span id="total">0 notas</span>
@@ -219,6 +234,50 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
+  <dialog id="registration" class="registration" aria-labelledby="registration-title">
+    <form id="registration-form">
+      <h2 id="registration-title">Criar conta</h2>
+      <label>E-mail <input name="email" type="email" autocomplete="email" maxlength="254" required></label>
+      <label>Confirme o e-mail <input name="emailConfirmation" type="email" maxlength="254" required></label>
+      <label>Nome de usuário <input name="username" autocomplete="username" minlength="3" maxlength="50" required></label>
+      <label>Senha <input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+      <label>Confirme a senha <input name="passwordConfirmation" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+      <small>A senha deve ter pelo menos 12 caracteres.</small>
+      <p id="registration-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="registration-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Criar conta</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="login" class="registration" aria-labelledby="login-title">
+    <form id="login-form">
+      <h2 id="login-title">Login</h2>
+      <label>Nome de usuário ou e-mail <input name="identifier" autocomplete="username" maxlength="254" required></label>
+      <label>Senha <input name="password" type="password" autocomplete="current-password" maxlength="128" required></label>
+      <p id="login-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="login-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Entrar</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="edit-account" class="registration" aria-labelledby="edit-account-title">
+    <form id="edit-account-form">
+      <h2 id="edit-account-title">Editar conta</h2>
+      <label>E-mail <input name="email" type="email" autocomplete="email" maxlength="254" required></label>
+      <label>Nome de usuário <input name="username" autocomplete="username" minlength="3" maxlength="50" required></label>
+      <label>Senha atual <input name="currentPassword" type="password" autocomplete="current-password" maxlength="128" required></label>
+      <label>Nova senha (opcional) <input name="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128"></label>
+      <label>Confirme a nova senha <input name="passwordConfirmation" type="password" autocomplete="new-password" maxlength="128"></label>
+      <small>Se quiser alterar a senha, use pelo menos 12 caracteres.</small>
+      <p id="edit-account-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="edit-account-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Salvar</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="move-note-dialog" class="registration" aria-labelledby="move-note-title">
     <form id="move-note-form">
       <h2 id="move-note-title">Mover para pasta</h2>

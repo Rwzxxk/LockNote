@@ -831,9 +831,72 @@ function insertText(text) {
 }
 
 // ---------- Eventos ----------
+const accountControl = $('#account-control');
+const accountToggle = $('#account-toggle');
+
+document.addEventListener('click', (e) => {
+  if (accountControl.open && !accountControl.contains(e.target)) accountControl.open = false;
+});
+
 $('#collapse').addEventListener('click', () => toggleSidebar(false));
 $('#open-sidebar').addEventListener('click', () => toggleSidebar(true));
 $('#backdrop').addEventListener('click', closeDrawer);
+// ---------- Conta (somente demonstração) ----------
+// Login, cadastro e edição de conta ficam só na interface: os diálogos abrem
+// e validam os campos, mas nada é enviado ao servidor (não há contas no back-end).
+const login = $('#login');
+const loginForm = $('#login-form');
+const loginCancel = $('#login-cancel');
+const loginButton = $('#guest-login');
+const registration = $('#registration');
+const registrationForm = $('#registration-form');
+const registrationError = $('#registration-error');
+const registrationCancel = $('#registration-cancel');
+const registerButton = $('#guest-register');
+const editAccount = $('#edit-account');
+const DEMO_MESSAGE = 'Contas ainda não estão disponíveis nesta versão';
+
+function openAccountDialog(dialog, form) {
+  accountControl.open = false;
+  form.reset();
+  form.querySelectorAll('[role="alert"]').forEach((p) => { p.hidden = true; });
+  dialog.showModal();
+}
+
+function closeAccountDialog(dialog, form) {
+  dialog.addEventListener('close', () => {
+    form.reset();
+    accountToggle.focus();
+  });
+}
+
+loginButton.addEventListener('click', () => openAccountDialog(login, loginForm));
+loginCancel.addEventListener('click', () => login.close());
+closeAccountDialog(login, loginForm);
+loginForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  login.close();
+  toast(DEMO_MESSAGE);
+});
+
+registerButton.addEventListener('click', () => openAccountDialog(registration, registrationForm));
+registrationCancel.addEventListener('click', () => registration.close());
+closeAccountDialog(registration, registrationForm);
+registrationForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(registrationForm));
+  let error = '';
+  if (data.email.trim().toLowerCase() !== data.emailConfirmation.trim().toLowerCase()) {
+    error = 'Os e-mails precisam coincidir.';
+  } else if (data.password !== data.passwordConfirmation) {
+    error = 'As senhas precisam coincidir.';
+  }
+  registrationError.textContent = error;
+  registrationError.hidden = !error;
+  if (error) return;
+  registration.close();
+  toast(DEMO_MESSAGE);
+});
 $('#new-text').addEventListener('click', () => newNote('text'));
 $('#new-code').addEventListener('click', () => newNote('code'));
 $('#empty-text').addEventListener('click', () => newNote('text'));
@@ -925,7 +988,13 @@ el.search.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (moveNoteDialog.open || removeFolderDialog.open || deleteNoteDialog.open) return;
+  if (registration.open || login.open || editAccount.open || moveNoteDialog.open
+    || removeFolderDialog.open || deleteNoteDialog.open) return;
+  if (e.key === 'Escape' && accountControl.open) {
+    accountControl.open = false;
+    accountToggle.focus();
+    return;
+  }
   const mod = e.ctrlKey || e.metaKey;
   const key = e.key.toLowerCase();
   if (mod && key === 's') { e.preventDefault(); save(); }
@@ -950,6 +1019,14 @@ window.addEventListener('beforeunload', (e) => {
 setInterval(() => { renderList(); renderMeta(); }, 60000);
 
 // ---------- Início ----------
+const sidebarAnimals = ['🐱', '🐶', '🦊', '🐼', '🐰', '🐸', '🐨', '🦉'];
+const sidebarAvatarKey = 'locknote.sidebarAvatar';
+const previousAvatar = store(sidebarAvatarKey);
+const availableAvatars = sidebarAnimals.filter((animal) => animal !== previousAvatar);
+const sidebarAvatar = availableAvatars[Math.floor(Math.random() * availableAvatars.length)];
+$('#sidebar-avatar').textContent = sidebarAvatar;
+store(sidebarAvatarKey, sidebarAvatar);
+
 if (store('locknote.sidebarCollapsed') === '1' && !isMobile()) el.app.classList.add('sidebar-collapsed');
 loadNotes().then(() => {
   if (state.notes.length && folderNavigation === 0) openNote(state.notes[0].id);
