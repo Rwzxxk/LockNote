@@ -841,214 +841,61 @@ document.addEventListener('click', (e) => {
 $('#collapse').addEventListener('click', () => toggleSidebar(false));
 $('#open-sidebar').addEventListener('click', () => toggleSidebar(true));
 $('#backdrop').addEventListener('click', closeDrawer);
+// ---------- Conta (somente demonstração) ----------
+// Login, cadastro e edição de conta ficam só na interface: os diálogos abrem
+// e validam os campos, mas nada é enviado ao servidor (não há contas no back-end).
 const login = $('#login');
 const loginForm = $('#login-form');
-const loginError = $('#login-error');
-const loginSubmit = loginForm.querySelector('[type="submit"]');
 const loginCancel = $('#login-cancel');
 const loginButton = $('#guest-login');
-const registerButton = $('#guest-register');
-const logoutButton = $('#account-logout');
-const editAccountButton = $('#account-edit');
-let accountUsername;
-
-function renderAccount(username) {
-  accountUsername = username;
-  $('#account-name').textContent = username || 'Visitante';
-  loginButton.hidden = registerButton.hidden = Boolean(username);
-  logoutButton.hidden = editAccountButton.hidden = !username;
-}
-
-function showLoginError(message) {
-  loginError.textContent = message;
-  loginError.hidden = !message;
-}
-
-loginButton.addEventListener('click', () => {
-  accountControl.open = false;
-  loginForm.reset();
-  showLoginError('');
-  login.showModal();
-});
-loginCancel.addEventListener('click', () => login.close());
-login.addEventListener('close', () => {
-  loginForm.reset();
-  accountToggle.focus();
-});
-login.addEventListener('cancel', (event) => {
-  if (loginSubmit.disabled) event.preventDefault();
-});
-loginForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (loginSubmit.disabled) return;
-  const data = Object.fromEntries(new FormData(loginForm));
-  showLoginError('');
-  loginSubmit.disabled = loginCancel.disabled = true;
-  try {
-    const response = await fetch('/api/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => null);
-      showLoginError(error?.error || 'Não foi possível fazer login.');
-      return;
-    }
-    const { username } = await response.json();
-    renderAccount(username);
-    login.close();
-  } catch {
-    showLoginError('Não foi possível conectar ao servidor.');
-  } finally {
-    loginSubmit.disabled = loginCancel.disabled = false;
-  }
-});
-logoutButton.addEventListener('click', async () => {
-  logoutButton.disabled = true;
-  try {
-    await request('DELETE', '/api/session');
-    renderAccount(null);
-    accountControl.open = false;
-    accountToggle.focus();
-  } catch {
-    toast('Não foi possível sair da conta');
-  } finally {
-    logoutButton.disabled = false;
-  }
-});
-
-request('GET', '/api/session').then(({ username }) => {
-  if (accountUsername === undefined) renderAccount(username);
-}).catch(() => {});
-
-const editAccount = $('#edit-account');
-const editAccountForm = $('#edit-account-form');
-const editAccountError = $('#edit-account-error');
-const editAccountSubmit = editAccountForm.querySelector('[type="submit"]');
-const editAccountCancel = $('#edit-account-cancel');
-
-function showEditAccountError(message) {
-  editAccountError.textContent = message;
-  editAccountError.hidden = !message;
-}
-
-editAccountButton.addEventListener('click', async () => {
-  editAccountButton.disabled = true;
-  try {
-    const { email, username } = await request('GET', '/api/session');
-    if (!username || !accountUsername || logoutButton.disabled) {
-      if (!username) renderAccount(null);
-      return;
-    }
-    editAccountForm.reset();
-    editAccountForm.elements.email.value = email;
-    editAccountForm.elements.username.value = username;
-    showEditAccountError('');
-    accountControl.open = false;
-    editAccount.showModal();
-  } catch {
-    toast('Não foi possível carregar os dados da conta');
-  } finally {
-    editAccountButton.disabled = false;
-  }
-});
-editAccountCancel.addEventListener('click', () => editAccount.close());
-editAccount.addEventListener('close', () => {
-  editAccountForm.reset();
-  accountToggle.focus();
-});
-editAccount.addEventListener('cancel', (event) => {
-  if (editAccountSubmit.disabled) event.preventDefault();
-});
-editAccountForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (editAccountSubmit.disabled) return;
-  const data = Object.fromEntries(new FormData(editAccountForm));
-  if (data.newPassword !== data.passwordConfirmation) {
-    showEditAccountError('As senhas precisam coincidir.');
-    return;
-  }
-  showEditAccountError('');
-  editAccountSubmit.disabled = editAccountCancel.disabled = true;
-  try {
-    const response = await fetch('/api/account', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => null);
-      showEditAccountError(error?.error || 'Não foi possível atualizar a conta.');
-      return;
-    }
-    const { username } = await response.json();
-    renderAccount(username);
-    editAccount.close();
-    toast('Conta atualizada');
-  } catch {
-    showEditAccountError('Não foi possível conectar ao servidor.');
-  } finally {
-    editAccountSubmit.disabled = editAccountCancel.disabled = false;
-  }
-});
 const registration = $('#registration');
 const registrationForm = $('#registration-form');
 const registrationError = $('#registration-error');
-const registrationSubmit = registrationForm.querySelector('[type="submit"]');
 const registrationCancel = $('#registration-cancel');
+const registerButton = $('#guest-register');
+const editAccount = $('#edit-account');
+const DEMO_MESSAGE = 'Contas ainda não estão disponíveis nesta versão';
 
-function showRegistrationError(message) {
-  registrationError.textContent = message;
-  registrationError.hidden = !message;
+function openAccountDialog(dialog, form) {
+  accountControl.open = false;
+  form.reset();
+  form.querySelectorAll('[role="alert"]').forEach((p) => { p.hidden = true; });
+  dialog.showModal();
 }
 
-registerButton.addEventListener('click', () => {
-  accountControl.open = false;
-  registrationForm.reset();
-  showRegistrationError('');
-  registration.showModal();
-});
-registrationCancel.addEventListener('click', () => registration.close());
-registration.addEventListener('close', () => {
-  registrationForm.reset();
-  accountToggle.focus();
-});
-registration.addEventListener('cancel', (event) => {
-  if (registrationSubmit.disabled) event.preventDefault();
-});
-registrationForm.addEventListener('submit', async (event) => {
+function closeAccountDialog(dialog, form) {
+  dialog.addEventListener('close', () => {
+    form.reset();
+    accountToggle.focus();
+  });
+}
+
+loginButton.addEventListener('click', () => openAccountDialog(login, loginForm));
+loginCancel.addEventListener('click', () => login.close());
+closeAccountDialog(login, loginForm);
+loginForm.addEventListener('submit', (event) => {
   event.preventDefault();
-  if (registrationSubmit.disabled) return;
+  login.close();
+  toast(DEMO_MESSAGE);
+});
+
+registerButton.addEventListener('click', () => openAccountDialog(registration, registrationForm));
+registrationCancel.addEventListener('click', () => registration.close());
+closeAccountDialog(registration, registrationForm);
+registrationForm.addEventListener('submit', (event) => {
+  event.preventDefault();
   const data = Object.fromEntries(new FormData(registrationForm));
+  let error = '';
   if (data.email.trim().toLowerCase() !== data.emailConfirmation.trim().toLowerCase()) {
-    showRegistrationError('Os e-mails precisam coincidir.');
-    return;
+    error = 'Os e-mails precisam coincidir.';
+  } else if (data.password !== data.passwordConfirmation) {
+    error = 'As senhas precisam coincidir.';
   }
-  if (data.password !== data.passwordConfirmation) {
-    showRegistrationError('As senhas precisam coincidir.');
-    return;
-  }
-  showRegistrationError('');
-  registrationSubmit.disabled = registrationCancel.disabled = true;
-  try {
-    const response = await fetch('/api/accounts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => null);
-      showRegistrationError(error?.error || 'Não foi possível criar a conta.');
-      return;
-    }
-    registration.close();
-    toast('Conta criada com sucesso');
-  } catch {
-    showRegistrationError('Não foi possível conectar ao servidor.');
-  } finally {
-    registrationSubmit.disabled = registrationCancel.disabled = false;
-  }
+  registrationError.textContent = error;
+  registrationError.hidden = !error;
+  if (error) return;
+  registration.close();
+  toast(DEMO_MESSAGE);
 });
 $('#new-text').addEventListener('click', () => newNote('text'));
 $('#new-code').addEventListener('click', () => newNote('code'));
