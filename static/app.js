@@ -496,9 +496,18 @@ function insertText(text) {
 }
 
 // ---------- Eventos ----------
+const accountControl = $('#account-control');
+const accountToggle = $('#account-toggle');
+
+document.addEventListener('click', (e) => {
+  if (accountControl.open && !accountControl.contains(e.target)) accountControl.open = false;
+});
+
 $('#collapse').addEventListener('click', () => toggleSidebar(false));
 $('#open-sidebar').addEventListener('click', () => toggleSidebar(true));
 $('#backdrop').addEventListener('click', closeDrawer);
+$('#guest-login').addEventListener('click', () => toast('Login ainda indisponível'));
+$('#guest-register').addEventListener('click', () => toast('Cadastro ainda indisponível'));
 $('#new-text').addEventListener('click', () => newNote('text'));
 $('#new-code').addEventListener('click', () => newNote('code'));
 $('#empty-text').addEventListener('click', () => newNote('text'));
@@ -570,6 +579,11 @@ el.search.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && accountControl.open) {
+    accountControl.open = false;
+    accountToggle.focus();
+    return;
+  }
   const mod = e.ctrlKey || e.metaKey;
   const key = e.key.toLowerCase();
   if (mod && key === 's') { e.preventDefault(); save(); }
