@@ -7,6 +7,8 @@ const ICONS = {
   text: '<svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg>',
   code: '<svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
   clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+  folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 4v6m4-6v6"/></svg>',
   calendar: '<svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg>',
 };
 
@@ -25,7 +27,10 @@ async function request(method, url, body) {
     headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`${method} ${url}: ${res.status}`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => null);
+    throw new Error(error?.error || `${method} ${url}: ${res.status}`);
+  }
   return res.status === 204 ? null : res.json();
 }
 const api = {
@@ -33,15 +38,25 @@ const api = {
   create: (n) => request('POST', '/api/notes', n),
   update: (id, n) => request('PUT', `/api/notes/${id}`, n),
   remove: (id) => request('DELETE', `/api/notes/${id}`),
+  folders: () => request('GET', '/api/folders'),
+  createFolder: (name, color) => request('POST', '/api/folders', { name, color }),
+  updateFolder: (id, name, color) => request('PUT', `/api/folders/${id}`, { name, color }),
+  removeFolder: (id) => request('DELETE', `/api/folders/${id}`),
+  folderNotes: (id) => request('GET', `/api/folders/${id}/notes`),
+  moveNote: (id, folderId) => request('PUT', `/api/notes/${id}/folder`, { folderId }),
+  pinNote: (id, pinned) => request('PUT', `/api/notes/${id}/pin`, { pinned }),
 };
 
 // ---------- Estado ----------
 const state = {
   notes: [],
   current: null,   // nota aberta (cópia local editável)
+  openFolder: null,
+  noteFolderOrigin: null,
   filter: 'all',
   query: '',
   saveTimer: null,
+  saveInFlight: null,
   dirty: false,
   lineCount: 0,
 };
@@ -51,6 +66,8 @@ const el = {
   list: $('#note-list'),
   search: $('#search'),
   empty: $('#empty'),
+  foldersView: $('#folders-view'),
+  noteFolderBack: $('#note-folder-back'),
   editor: $('#editor'),
   tools: $('#note-tools'),
   statusbar: $('#statusbar'),
@@ -64,6 +81,8 @@ const el = {
   metaKind: $('#meta-kind'),
   metaCreated: $('#meta-created'),
   metaUpdated: $('#meta-updated'),
+  pinNote: $('#pin-note'),
+  pinLabel: $('#pin-note-label'),
   crumbKind: $('#crumb-kind'),
   crumbSep2: $('#crumb-sep2'),
   crumbTitle: $('#crumb-title'),
@@ -151,6 +170,8 @@ function renderCounts() {
 function renderList() {
   renderCounts();
   const items = state.notes.filter((n) => state.filter === 'all' || n.kind === state.filter);
+  items.sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))
+    || Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || b.id - a.id);
   el.list.replaceChildren();
 
   if (!items.length) {
@@ -163,7 +184,7 @@ function renderList() {
 
   let lastGroup = null;
   for (const n of items) {
-    const group = groupOf(n.updatedAt);
+    const group = n.pinned ? 'Fixados' : groupOf(n.updatedAt);
     if (group !== lastGroup) {
       const g = document.createElement('div');
       g.className = 'group-label';
@@ -302,6 +323,8 @@ function syncScroll() {
 function renderMeta() {
   const c = state.current;
   if (!c) return;
+  el.pinNote.dataset.pinned = Boolean(c.pinned);
+  el.pinLabel.textContent = c.pinned ? 'Desafixar' : 'Fixar';
   const isCode = c.kind === 'code';
 
   el.metaKind.className = 'pill' + (isCode ? ' code' : '');
@@ -347,10 +370,12 @@ function applyKind() {
 }
 
 function showEditor(show) {
+  el.foldersView.hidden = true;
   el.empty.hidden = show;
   el.editor.hidden = !show;
   el.tools.hidden = !show;
   el.statusbar.hidden = !show;
+  el.noteFolderBack.hidden = !show || !state.noteFolderOrigin;
   if (!show) {
     el.crumbKind.textContent = 'Notas';
     el.crumbSep2.hidden = true;
@@ -358,11 +383,15 @@ function showEditor(show) {
   }
 }
 
-async function openNote(id) {
-  await flushSave();
-  const n = state.notes.find((x) => x.id === id);
+let folderNavigation = 0;
+
+async function openNote(id, { note, folder } = {}) {
+  folderNavigation++;
+  if (!await flushSave()) return;
+  const n = note || state.notes.find((x) => x.id === id);
   if (!n) return;
   state.current = { ...n };
+  state.noteFolderOrigin = folder || null;
   el.title.value = n.title;
   el.content.value = n.content;
   el.content.scrollTop = 0;
@@ -374,17 +403,280 @@ async function openNote(id) {
 }
 
 async function newNote(kind) {
-  await flushSave();
+  const folder = el.foldersView.hidden ? null : state.openFolder;
+  const folderId = folder?.id ?? null;
+  if (!await flushSave()) return;
   try {
-    const n = await api.create({ title: '', content: '', kind, language: '' });
+    const n = await api.create({ title: '', content: '', kind, language: '', folderId });
     state.notes.unshift(n);
     if (state.filter !== 'all' && state.filter !== kind) setFilter('all');
-    await openNote(n.id);
-    el.title.focus();
+    await openNote(n.id, { note: n, folder });
+    if (state.current?.id === n.id) el.title.focus();
   } catch (e) {
     toast('Não foi possível criar a nota');
   }
 }
+
+const folderForm = $('#folder-form');
+const folderFormButton = $('#show-folder-form');
+const editFolderButton = $('#edit-folder');
+const folderColorPreview = $('#folder-color-preview');
+const folderSubmit = folderForm.querySelector('[type="submit"]');
+const folderGrid = $('#folders-grid');
+const folderEmpty = $('#folders-empty');
+const folderError = $('#folder-error');
+const folderBack = $('#folder-back');
+const folderTitle = $('#folders-title');
+
+function addFolderCard(icon, title, subtitle, onClick, folder) {
+  const card = document.createElement('button');
+  card.type = 'button';
+  card.className = 'folder-card';
+  card.innerHTML = icon;
+  const label = document.createElement('strong');
+  const details = document.createElement('small');
+  label.textContent = title;
+  details.textContent = subtitle;
+  card.append(label, details);
+  card.addEventListener('click', onClick);
+  if (!folder) {
+    folderGrid.append(card);
+    return;
+  }
+  card.dataset.color = folder.color || 'default';
+  const item = document.createElement('div');
+  item.className = 'folder-grid-item';
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'icon-btn danger-action folder-grid-remove';
+  remove.title = 'Remover pasta';
+  remove.setAttribute('aria-label', `Remover pasta ${folder.name}`);
+  remove.setAttribute('aria-haspopup', 'dialog');
+  remove.innerHTML = ICONS.trash;
+  remove.addEventListener('click', () => openRemoveFolderDialog(folder));
+  item.append(card, remove);
+  folderGrid.append(item);
+}
+
+async function openFolders(folder = null) {
+  const navigation = ++folderNavigation;
+  try {
+    const items = await (folder ? api.folderNotes(folder.id) : api.folders());
+    if (navigation !== folderNavigation || !await flushSave() || navigation !== folderNavigation) return;
+    state.openFolder = folder;
+    state.current = null;
+    state.noteFolderOrigin = null;
+    showEditor(false);
+    el.empty.hidden = true;
+    el.foldersView.hidden = false;
+    el.crumbKind.textContent = folder?.name || 'Pastas';
+    folderTitle.textContent = folder?.name || 'Pastas';
+    folderBack.hidden = !folder;
+    folderFormButton.hidden = Boolean(folder);
+    $('#folder-actions').hidden = !folder;
+    folderForm.hidden = true;
+    folderError.hidden = true;
+    folderGrid.replaceChildren();
+    folderEmpty.hidden = items.length > 0;
+    folderEmpty.textContent = folder ? 'Nenhuma nota ou código nesta pasta.' : 'Nenhuma pasta criada.';
+    for (const item of items) {
+      if (folder) {
+        const kind = item.kind === 'code' ? 'Código' : 'Nota';
+        const type = item.pinned ? (item.kind === 'code' ? 'Código · Fixado' : 'Nota · Fixada') : kind;
+        const preview = firstLine(item.content);
+        addFolderCard(ICONS[item.kind] || ICONS.text, item.title || 'Sem título',
+          preview ? `${type} · ${preview}` : type, () => openNote(item.id, { note: item, folder }));
+      } else {
+        const texts = `${item.textCount} ${item.textCount === 1 ? 'nota' : 'notas'}`;
+        const codes = `${item.codeCount} ${item.codeCount === 1 ? 'código' : 'códigos'}`;
+        addFolderCard(ICONS.folder, item.name, `${texts} · ${codes}`, () => openFolders(item), item);
+      }
+    }
+    renderList();
+    closeDrawer();
+    folderTitle.focus();
+  } catch {
+    if (navigation === folderNavigation) toast('Não foi possível carregar as pastas');
+  }
+}
+
+$('#show-folders').addEventListener('click', () => openFolders());
+$('#folder-new-note').addEventListener('click', () => newNote('text'));
+$('#folder-new-code').addEventListener('click', () => newNote('code'));
+folderBack.addEventListener('click', () => openFolders());
+el.noteFolderBack.addEventListener('click', () => {
+  if (state.noteFolderOrigin) return openFolders(state.noteFolderOrigin);
+});
+function toggleFolderForm(folder = null) {
+  folderForm.hidden = !folderForm.hidden;
+  if (folderForm.hidden) return;
+  folderError.hidden = true;
+  folderForm.elements.name.value = folder?.name || '';
+  folderForm.elements.color.value = folder?.color || 'default';
+  folderColorPreview.dataset.color = folderForm.elements.color.value;
+  folderSubmit.textContent = folder ? 'Salvar alterações' : 'Criar pasta';
+  folderForm.elements.name.focus();
+}
+folderFormButton.addEventListener('click', () => toggleFolderForm());
+editFolderButton.addEventListener('click', () => toggleFolderForm(state.openFolder));
+folderForm.elements.color.addEventListener('change', () => {
+  folderColorPreview.dataset.color = folderForm.elements.color.value;
+});
+folderForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (folderSubmit.disabled) return;
+  const folder = state.openFolder;
+  const { name, color } = Object.fromEntries(new FormData(folderForm));
+  const navigation = folderNavigation;
+  folderSubmit.disabled = true;
+  folderError.hidden = true;
+  try {
+    const saved = await (folder ? api.updateFolder(folder.id, name, color) : api.createFolder(name, color));
+    if (navigation === folderNavigation) {
+      await openFolders(folder ? { ...folder, ...saved } : null);
+    }
+  } catch (error) {
+    if (navigation === folderNavigation) {
+      folderError.textContent = error.message;
+      folderError.hidden = false;
+    }
+  } finally {
+    folderSubmit.disabled = false;
+  }
+});
+
+const removeFolderDialog = $('#remove-folder-dialog');
+const removeFolderForm = $('#remove-folder-form');
+const removeFolderName = $('#remove-folder-name');
+const removeFolderError = $('#remove-folder-error');
+const removeFolderCancel = $('#remove-folder-cancel');
+const removeFolderSubmit = removeFolderForm.querySelector('[type="submit"]');
+let folderToRemove = null;
+
+function openRemoveFolderDialog(folder) {
+  folderToRemove = folder;
+  removeFolderName.textContent = folder.name;
+  removeFolderError.hidden = true;
+  removeFolderDialog.showModal();
+}
+removeFolderCancel.addEventListener('click', () => removeFolderDialog.close());
+removeFolderDialog.addEventListener('cancel', (event) => {
+  if (removeFolderSubmit.disabled) event.preventDefault();
+});
+removeFolderForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const folder = folderToRemove;
+  if (!folder || removeFolderSubmit.disabled) return;
+  removeFolderSubmit.disabled = removeFolderCancel.disabled = true;
+  removeFolderError.hidden = true;
+  try {
+    await api.removeFolder(folder.id);
+    for (const note of state.notes) {
+      if (note.folderId === folder.id) note.folderId = null;
+    }
+    folderToRemove = null;
+    removeFolderDialog.close();
+    toast('Pasta excluída');
+    await openFolders();
+  } catch (error) {
+    removeFolderError.textContent = error.message;
+    removeFolderError.hidden = false;
+  } finally {
+    removeFolderSubmit.disabled = removeFolderCancel.disabled = false;
+  }
+});
+
+const moveNoteDialog = $('#move-note-dialog');
+const moveNoteTitle = $('#move-note-title');
+const moveNoteForm = $('#move-note-form');
+const moveNoteSelect = $('#move-note-folder');
+const moveNoteNewFolder = $('#move-note-new-folder');
+const moveNoteFolderName = $('#move-note-folder-name');
+const moveNoteError = $('#move-note-error');
+const moveNoteButton = $('#move-note');
+const moveNoteCancel = $('#move-note-cancel');
+const moveNoteSubmit = moveNoteForm.querySelector('[type="submit"]');
+
+function syncMoveNoteFolder() {
+  const creating = moveNoteSelect.value === 'new';
+  moveNoteNewFolder.hidden = !creating;
+  moveNoteFolderName.disabled = !creating || moveNoteSubmit.disabled;
+  moveNoteFolderName.required = creating;
+}
+
+moveNoteButton.addEventListener('click', async () => {
+  const note = state.current;
+  moveNoteButton.disabled = true;
+  try {
+    const folders = await api.folders();
+    if (!note || state.current !== note) return;
+    moveNoteTitle.textContent = note.kind === 'code' ? 'Mover código para pasta' : 'Mover nota para pasta';
+    moveNoteSelect.replaceChildren(new Option('Sem pasta', ''));
+    for (const folder of folders) moveNoteSelect.add(new Option(folder.name, folder.id));
+    moveNoteSelect.add(new Option('Criar nova pasta', 'new'));
+    moveNoteSelect.value = folders.length ? (note.folderId ?? '') : 'new';
+    if (moveNoteSelect.selectedIndex === -1) moveNoteSelect.value = '';
+    moveNoteFolderName.value = '';
+    syncMoveNoteFolder();
+    moveNoteError.hidden = true;
+    moveNoteDialog.showModal();
+  } catch {
+    toast('Não foi possível carregar as pastas');
+  } finally {
+    moveNoteButton.disabled = false;
+  }
+});
+moveNoteSelect.addEventListener('change', () => {
+  moveNoteError.hidden = true;
+  syncMoveNoteFolder();
+  if (!moveNoteNewFolder.hidden) moveNoteFolderName.focus();
+});
+moveNoteCancel.addEventListener('click', () => moveNoteDialog.close());
+moveNoteDialog.addEventListener('cancel', (event) => {
+  if (moveNoteSubmit.disabled) event.preventDefault();
+});
+moveNoteDialog.addEventListener('close', () => moveNoteButton.focus());
+moveNoteForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const note = state.current;
+  if (moveNoteSubmit.disabled || !note) return;
+  const isCode = note.kind === 'code';
+  const creating = moveNoteSelect.value === 'new';
+  const name = moveNoteFolderName.value.trim();
+  moveNoteSubmit.disabled = moveNoteCancel.disabled = moveNoteSelect.disabled = true;
+  syncMoveNoteFolder();
+  moveNoteError.hidden = true;
+  let createdFolder;
+  try {
+    if (!await flushSave()) {
+      throw new Error(isCode
+        ? 'O código ainda não foi salvo. Tente novamente.'
+        : 'A nota ainda não foi salva. Tente novamente.');
+    }
+    if (creating) {
+      if (!name) throw new Error('Informe o nome da pasta.');
+      createdFolder = await api.createFolder(name);
+      moveNoteSelect.add(new Option(createdFolder.name, createdFolder.id), moveNoteSelect.options.length - 1);
+      moveNoteSelect.value = createdFolder.id;
+      syncMoveNoteFolder();
+    }
+    const destination = moveNoteSelect.value ? Number(moveNoteSelect.value) : null;
+    const moved = await api.moveNote(note.id, destination);
+    note.folderId = moved.folderId;
+    const cachedNote = state.notes.find((item) => item.id === note.id);
+    if (cachedNote) cachedNote.folderId = moved.folderId;
+    moveNoteDialog.close();
+    toast(isCode ? 'Pasta do código atualizada' : 'Pasta da nota atualizada');
+  } catch (error) {
+    moveNoteError.textContent = createdFolder
+      ? `A pasta foi criada. Tente salvar novamente para mover ${isCode ? 'o código' : 'a nota'}.`
+      : error.message;
+    moveNoteError.hidden = false;
+  } finally {
+    moveNoteSubmit.disabled = moveNoteCancel.disabled = moveNoteSelect.disabled = false;
+    syncMoveNoteFolder();
+  }
+});
 
 // ---------- Salvamento automático ----------
 const SAVE_LABELS = { saved: 'Salvo', editing: 'Editando…', saving: 'Salvando…', error: 'Erro ao salvar — tentando de novo' };
@@ -402,32 +694,51 @@ function scheduleSave() {
 
 async function save() {
   clearTimeout(state.saveTimer);
-  if (!state.current || !state.dirty) return;
+  if (state.saveInFlight) return state.saveInFlight;
+  if (!state.current || !state.dirty) return true;
   state.dirty = false;
-  const c = state.current;
+  const note = state.current;
   setSaveState('saving');
+  state.saveInFlight = persistNote(note);
+  try {
+    return await state.saveInFlight;
+  } finally {
+    state.saveInFlight = null;
+    if (state.dirty && el.saveState.dataset.state !== 'error') scheduleSave();
+  }
+}
+
+async function persistNote(c) {
+  const pinnedAtStart = c.pinned;
   try {
     const saved = await api.update(c.id, {
       title: c.title, content: c.content, kind: c.kind, language: c.language,
     });
+    if (c.pinned !== pinnedAtStart) saved.pinned = c.pinned;
     state.notes = [saved, ...state.notes.filter((n) => n.id !== saved.id)];
-    if (state.current && state.current.id === saved.id) {
+    if (state.current === c) {
       state.current.updatedAt = saved.updatedAt;
-      setSaveState('saved');
+      if (!state.dirty) setSaveState('saved');
       renderMeta();
     }
     renderList();
+    return true;
   } catch (e) {
-    if (state.current && state.current.id === c.id) {
+    if (state.current === c) {
+      clearTimeout(state.saveTimer);
       state.dirty = true;
       setSaveState('error');
       state.saveTimer = setTimeout(save, 3000);
     }
+    return false;
   }
 }
 
 async function flushSave() {
-  if (state.dirty) await save();
+  while (state.dirty || state.saveInFlight) {
+    if (!await save()) return false;
+  }
+  return true;
 }
 
 // ---------- Ações ----------
@@ -441,27 +752,69 @@ async function copyContent() {
   toast('Copiado para a área de transferência');
 }
 
-async function deleteCurrent() {
-  const c = state.current;
-  if (!c || !confirm(`Excluir “${c.title || 'Sem título'}”? Isso não pode ser desfeito.`)) return;
-  clearTimeout(state.saveTimer);
-  state.dirty = false;
+const deleteNoteDialog = $('#delete-note-dialog');
+const deleteNoteForm = $('#delete-note-form');
+const deleteNoteTitle = $('#delete-note-title');
+const deleteNoteName = $('#delete-note-name');
+const deleteNoteError = $('#delete-note-error');
+const deleteNoteCancel = $('#delete-note-cancel');
+const deleteNoteSubmit = deleteNoteForm.querySelector('[type="submit"]');
+let noteToDelete = null;
+
+function openDeleteNoteDialog() {
+  const note = state.current;
+  if (!note) return;
+  noteToDelete = note;
+  const isCode = note.kind === 'code';
+  deleteNoteTitle.textContent = isCode ? 'Excluir código?' : 'Excluir nota?';
+  deleteNoteName.textContent = `“${note.title || 'Sem título'}”`;
+  deleteNoteSubmit.textContent = isCode ? 'Excluir código' : 'Excluir nota';
+  deleteNoteError.hidden = true;
+  deleteNoteDialog.showModal();
+}
+
+deleteNoteCancel.addEventListener('click', () => deleteNoteDialog.close());
+deleteNoteDialog.addEventListener('cancel', (event) => {
+  if (deleteNoteSubmit.disabled) event.preventDefault();
+});
+deleteNoteForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const note = noteToDelete;
+  if (!note || deleteNoteSubmit.disabled) return;
+  deleteNoteSubmit.disabled = deleteNoteCancel.disabled = true;
+  deleteNoteError.hidden = true;
+  const isCode = note.kind === 'code';
   try {
-    await api.remove(c.id);
-  } catch (e) {
-    toast('Não foi possível excluir a nota');
+    if (state.current === note) {
+      await state.saveInFlight;
+      if (state.current === note) clearTimeout(state.saveTimer);
+    }
+    await api.remove(note.id);
+  } catch {
+    if (state.current === note && state.dirty) scheduleSave();
+    deleteNoteError.textContent = isCode ? 'Não foi possível excluir o código.' : 'Não foi possível excluir a nota.';
+    deleteNoteError.hidden = false;
+    return;
+  } finally {
+    deleteNoteSubmit.disabled = deleteNoteCancel.disabled = false;
+  }
+  state.notes = state.notes.filter((n) => n.id !== note.id);
+  noteToDelete = null;
+  deleteNoteDialog.close();
+  toast(isCode ? 'Código excluído' : 'Nota excluída');
+  if (state.current !== note) {
+    renderList();
     return;
   }
-  state.notes = state.notes.filter((n) => n.id !== c.id);
+  state.dirty = false;
   state.current = null;
-  toast('Nota excluída');
   if (state.notes.length) {
     openNote(state.notes[0].id);
   } else {
     showEditor(false);
     renderList();
   }
-}
+});
 
 function setFilter(f) {
   state.filter = f;
@@ -478,16 +831,252 @@ function insertText(text) {
 }
 
 // ---------- Eventos ----------
+const accountControl = $('#account-control');
+const accountToggle = $('#account-toggle');
+
+document.addEventListener('click', (e) => {
+  if (accountControl.open && !accountControl.contains(e.target)) accountControl.open = false;
+});
+
 $('#collapse').addEventListener('click', () => toggleSidebar(false));
 $('#open-sidebar').addEventListener('click', () => toggleSidebar(true));
 $('#backdrop').addEventListener('click', closeDrawer);
+const login = $('#login');
+const loginForm = $('#login-form');
+const loginError = $('#login-error');
+const loginSubmit = loginForm.querySelector('[type="submit"]');
+const loginCancel = $('#login-cancel');
+const loginButton = $('#guest-login');
+const registerButton = $('#guest-register');
+const logoutButton = $('#account-logout');
+const editAccountButton = $('#account-edit');
+let accountUsername;
+
+function renderAccount(username) {
+  accountUsername = username;
+  $('#account-name').textContent = username || 'Visitante';
+  loginButton.hidden = registerButton.hidden = Boolean(username);
+  logoutButton.hidden = editAccountButton.hidden = !username;
+}
+
+function showLoginError(message) {
+  loginError.textContent = message;
+  loginError.hidden = !message;
+}
+
+loginButton.addEventListener('click', () => {
+  accountControl.open = false;
+  loginForm.reset();
+  showLoginError('');
+  login.showModal();
+});
+loginCancel.addEventListener('click', () => login.close());
+login.addEventListener('close', () => {
+  loginForm.reset();
+  accountToggle.focus();
+});
+login.addEventListener('cancel', (event) => {
+  if (loginSubmit.disabled) event.preventDefault();
+});
+loginForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (loginSubmit.disabled) return;
+  const data = Object.fromEntries(new FormData(loginForm));
+  showLoginError('');
+  loginSubmit.disabled = loginCancel.disabled = true;
+  try {
+    const response = await fetch('/api/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      showLoginError(error?.error || 'Não foi possível fazer login.');
+      return;
+    }
+    const { username } = await response.json();
+    renderAccount(username);
+    login.close();
+  } catch {
+    showLoginError('Não foi possível conectar ao servidor.');
+  } finally {
+    loginSubmit.disabled = loginCancel.disabled = false;
+  }
+});
+logoutButton.addEventListener('click', async () => {
+  logoutButton.disabled = true;
+  try {
+    await request('DELETE', '/api/session');
+    renderAccount(null);
+    accountControl.open = false;
+    accountToggle.focus();
+  } catch {
+    toast('Não foi possível sair da conta');
+  } finally {
+    logoutButton.disabled = false;
+  }
+});
+
+request('GET', '/api/session').then(({ username }) => {
+  if (accountUsername === undefined) renderAccount(username);
+}).catch(() => {});
+
+const editAccount = $('#edit-account');
+const editAccountForm = $('#edit-account-form');
+const editAccountError = $('#edit-account-error');
+const editAccountSubmit = editAccountForm.querySelector('[type="submit"]');
+const editAccountCancel = $('#edit-account-cancel');
+
+function showEditAccountError(message) {
+  editAccountError.textContent = message;
+  editAccountError.hidden = !message;
+}
+
+editAccountButton.addEventListener('click', async () => {
+  editAccountButton.disabled = true;
+  try {
+    const { email, username } = await request('GET', '/api/session');
+    if (!username || !accountUsername || logoutButton.disabled) {
+      if (!username) renderAccount(null);
+      return;
+    }
+    editAccountForm.reset();
+    editAccountForm.elements.email.value = email;
+    editAccountForm.elements.username.value = username;
+    showEditAccountError('');
+    accountControl.open = false;
+    editAccount.showModal();
+  } catch {
+    toast('Não foi possível carregar os dados da conta');
+  } finally {
+    editAccountButton.disabled = false;
+  }
+});
+editAccountCancel.addEventListener('click', () => editAccount.close());
+editAccount.addEventListener('close', () => {
+  editAccountForm.reset();
+  accountToggle.focus();
+});
+editAccount.addEventListener('cancel', (event) => {
+  if (editAccountSubmit.disabled) event.preventDefault();
+});
+editAccountForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (editAccountSubmit.disabled) return;
+  const data = Object.fromEntries(new FormData(editAccountForm));
+  if (data.newPassword !== data.passwordConfirmation) {
+    showEditAccountError('As senhas precisam coincidir.');
+    return;
+  }
+  showEditAccountError('');
+  editAccountSubmit.disabled = editAccountCancel.disabled = true;
+  try {
+    const response = await fetch('/api/account', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      showEditAccountError(error?.error || 'Não foi possível atualizar a conta.');
+      return;
+    }
+    const { username } = await response.json();
+    renderAccount(username);
+    editAccount.close();
+    toast('Conta atualizada');
+  } catch {
+    showEditAccountError('Não foi possível conectar ao servidor.');
+  } finally {
+    editAccountSubmit.disabled = editAccountCancel.disabled = false;
+  }
+});
+const registration = $('#registration');
+const registrationForm = $('#registration-form');
+const registrationError = $('#registration-error');
+const registrationSubmit = registrationForm.querySelector('[type="submit"]');
+const registrationCancel = $('#registration-cancel');
+
+function showRegistrationError(message) {
+  registrationError.textContent = message;
+  registrationError.hidden = !message;
+}
+
+registerButton.addEventListener('click', () => {
+  accountControl.open = false;
+  registrationForm.reset();
+  showRegistrationError('');
+  registration.showModal();
+});
+registrationCancel.addEventListener('click', () => registration.close());
+registration.addEventListener('close', () => {
+  registrationForm.reset();
+  accountToggle.focus();
+});
+registration.addEventListener('cancel', (event) => {
+  if (registrationSubmit.disabled) event.preventDefault();
+});
+registrationForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (registrationSubmit.disabled) return;
+  const data = Object.fromEntries(new FormData(registrationForm));
+  if (data.email.trim().toLowerCase() !== data.emailConfirmation.trim().toLowerCase()) {
+    showRegistrationError('Os e-mails precisam coincidir.');
+    return;
+  }
+  if (data.password !== data.passwordConfirmation) {
+    showRegistrationError('As senhas precisam coincidir.');
+    return;
+  }
+  showRegistrationError('');
+  registrationSubmit.disabled = registrationCancel.disabled = true;
+  try {
+    const response = await fetch('/api/accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      showRegistrationError(error?.error || 'Não foi possível criar a conta.');
+      return;
+    }
+    registration.close();
+    toast('Conta criada com sucesso');
+  } catch {
+    showRegistrationError('Não foi possível conectar ao servidor.');
+  } finally {
+    registrationSubmit.disabled = registrationCancel.disabled = false;
+  }
+});
 $('#new-text').addEventListener('click', () => newNote('text'));
 $('#new-code').addEventListener('click', () => newNote('code'));
 $('#empty-text').addEventListener('click', () => newNote('text'));
 $('#empty-code').addEventListener('click', () => newNote('code'));
 $('#copy-all').addEventListener('click', copyContent);
+el.pinNote.addEventListener('click', async () => {
+  const note = state.current;
+  if (!note || el.pinNote.disabled) return;
+  el.pinNote.disabled = true;
+  try {
+    const { pinned } = await api.pinNote(note.id, !note.pinned);
+    note.pinned = pinned;
+    const cached = state.notes.find((item) => item.id === note.id);
+    if (cached) cached.pinned = pinned;
+    if (state.current?.id === note.id) {
+      state.current.pinned = pinned;
+      renderMeta();
+    }
+    renderList();
+  } catch {
+    toast('Não foi possível alterar a fixação');
+  } finally {
+    el.pinNote.disabled = false;
+  }
+});
 $('#copy-code').addEventListener('click', copyContent);
-$('#delete').addEventListener('click', deleteCurrent);
+$('#delete').addEventListener('click', openDeleteNoteDialog);
 $$('.tab').forEach((t) => t.addEventListener('click', () => setFilter(t.dataset.filter)));
 
 el.title.addEventListener('input', () => {
@@ -538,7 +1127,7 @@ let searchTimer;
 el.search.addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(async () => {
-    await flushSave();
+    if (!await flushSave()) return;
     state.query = el.search.value.trim();
     loadNotes();
   }, 250);
@@ -552,6 +1141,13 @@ el.search.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  if (registration.open || login.open || editAccount.open || moveNoteDialog.open
+    || removeFolderDialog.open || deleteNoteDialog.open) return;
+  if (e.key === 'Escape' && accountControl.open) {
+    accountControl.open = false;
+    accountToggle.focus();
+    return;
+  }
   const mod = e.ctrlKey || e.metaKey;
   const key = e.key.toLowerCase();
   if (mod && key === 's') { e.preventDefault(); save(); }
@@ -566,7 +1162,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('beforeunload', (e) => {
-  if (state.dirty) {
+  if (state.dirty || state.saveInFlight) {
     save();
     e.preventDefault();
   }
@@ -576,7 +1172,15 @@ window.addEventListener('beforeunload', (e) => {
 setInterval(() => { renderList(); renderMeta(); }, 60000);
 
 // ---------- Início ----------
+const sidebarAnimals = ['🐱', '🐶', '🦊', '🐼', '🐰', '🐸', '🐨', '🦉'];
+const sidebarAvatarKey = 'locknote.sidebarAvatar';
+const previousAvatar = store(sidebarAvatarKey);
+const availableAvatars = sidebarAnimals.filter((animal) => animal !== previousAvatar);
+const sidebarAvatar = availableAvatars[Math.floor(Math.random() * availableAvatars.length)];
+$('#sidebar-avatar').textContent = sidebarAvatar;
+store(sidebarAvatarKey, sidebarAvatar);
+
 if (store('locknote.sidebarCollapsed') === '1' && !isMobile()) el.app.classList.add('sidebar-collapsed');
 loadNotes().then(() => {
-  if (state.notes.length) openNote(state.notes[0].id);
+  if (state.notes.length && folderNavigation === 0) openNote(state.notes[0].id);
 });

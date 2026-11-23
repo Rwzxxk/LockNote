@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/style.css?v=delete-note-dialog">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -22,9 +22,18 @@
     <aside class="sidebar" id="sidebar" aria-label="Notas">
       <div class="sb-head">
         <div class="logo">
-          <span class="logo-mark">
-            <svg viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          </span>
+          <details class="account-control" id="account-control">
+            <summary class="logo-mark" id="account-toggle" aria-label="Opções de conta">
+              <svg class="logo-lock" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <svg class="logo-avatar" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 20v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/></svg>
+            </summary>
+            <div class="account-panel" role="group" aria-label="Opções de conta">
+              <button type="button" id="guest-login">Login</button>
+              <button type="button" id="guest-register">Cadastre-se</button>
+              <button type="button" id="account-logout" hidden>Sair</button>
+              <button type="button" id="account-edit" hidden>Editar conta</button>
+            </div>
+          </details>
           <span class="logo-name">LockNote</span>
         </div>
         <button class="icon-btn" id="collapse" title="Recolher barra lateral (Ctrl+B)" aria-label="Recolher barra lateral">
@@ -41,6 +50,11 @@
           <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
         </button>
       </div>
+
+      <button type="button" class="btn btn-secondary folders-button" id="show-folders" aria-controls="folders-view">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+        Pastas
+      </button>
 
       <label class="search">
         <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
@@ -65,10 +79,18 @@
       <div class="note-list" id="note-list"></div>
 
       <footer class="sb-foot">
-        <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
-        <span id="total">0 notas</span>
-        <span class="sep">·</span>
-        <span>salvas localmente</span>
+        <div class="sb-account">
+          <div class="sb-guest">
+            <span class="sb-avatar" id="sidebar-avatar" aria-hidden="true">🐱</span>
+            <span id="account-name">Visitante</span>
+          </div>
+        </div>
+        <div class="sb-storage">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+          <span id="total">0 notas</span>
+          <span class="sep">·</span>
+          <span>salvas localmente</span>
+        </div>
       </footer>
     </aside>
 
@@ -109,6 +131,36 @@
       </header>
 
       <main class="page">
+        <section id="folders-view" class="folders-view" aria-labelledby="folders-title" hidden>
+          <button type="button" class="btn btn-secondary" id="folder-back" hidden>← Todas as pastas</button>
+          <header class="folders-heading">
+            <h1 id="folders-title" tabindex="-1">Pastas</h1>
+            <button type="button" class="btn btn-primary" id="show-folder-form">Nova pasta</button>
+            <div class="folder-actions" id="folder-actions" hidden>
+              <button type="button" class="btn btn-secondary" id="edit-folder">Editar pasta</button>
+              <button type="button" class="btn btn-primary" id="folder-new-note">Nova nota</button>
+              <button type="button" class="btn btn-secondary" id="folder-new-code">Novo código</button>
+            </div>
+          </header>
+          <form id="folder-form" class="folder-form" hidden>
+            <label for="folder-name">Nome da pasta</label>
+            <input id="folder-name" name="name" maxlength="80" required>
+            <label for="folder-color">Cor</label>
+            <span class="folder-color-preview" id="folder-color-preview" aria-hidden="true"></span>
+            <select id="folder-color" name="color">
+              <option value="default">Padrão</option>
+              <option value="blue">Azul</option>
+              <option value="green">Verde</option>
+              <option value="orange">Laranja</option>
+              <option value="pink">Rosa</option>
+              <option value="purple">Roxo</option>
+            </select>
+            <button type="submit" class="btn btn-primary">Criar pasta</button>
+            <p id="folder-error" role="alert" hidden></p>
+          </form>
+          <p id="folders-empty" class="folders-empty" hidden></p>
+          <div id="folders-grid" class="folders-grid"></div>
+        </section>
         <!-- Nenhuma nota aberta -->
         <section id="empty" class="empty">
           <div class="empty-icon">
@@ -136,11 +188,20 @@
 
         <!-- Editor -->
         <article id="editor" class="editor" hidden>
+          <button type="button" class="btn btn-secondary note-back" id="note-folder-back" hidden>← Voltar para a pasta</button>
           <input id="title" class="title" placeholder="Sem título" autocomplete="off" aria-label="Título">
           <div class="meta">
             <span class="pill" id="meta-kind"></span>
             <span class="meta-item" id="meta-created"></span>
             <span class="meta-item" id="meta-updated"></span>
+            <button type="button" class="btn btn-secondary note-meta-button" id="move-note" aria-haspopup="dialog">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+              Pasta
+            </button>
+            <button type="button" class="btn btn-secondary note-meta-button" id="pin-note">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5-4 1-2 5v3l-3-1-4-4-1-3h3l5-2 1-4Z"/><path d="m10 14-6 6"/></svg>
+              <span id="pin-note-label">Fixar</span>
+            </button>
           </div>
 
           <div class="sheet" id="sheet">
@@ -173,6 +234,92 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
-  <script src="/app.js"></script>
+  <dialog id="registration" class="registration" aria-labelledby="registration-title">
+    <form id="registration-form">
+      <h2 id="registration-title">Criar conta</h2>
+      <label>E-mail <input name="email" type="email" autocomplete="email" maxlength="254" required></label>
+      <label>Confirme o e-mail <input name="emailConfirmation" type="email" maxlength="254" required></label>
+      <label>Nome de usuário <input name="username" autocomplete="username" minlength="3" maxlength="50" required></label>
+      <label>Senha <input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+      <label>Confirme a senha <input name="passwordConfirmation" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+      <small>A senha deve ter pelo menos 12 caracteres.</small>
+      <p id="registration-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="registration-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Criar conta</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="login" class="registration" aria-labelledby="login-title">
+    <form id="login-form">
+      <h2 id="login-title">Login</h2>
+      <label>Nome de usuário ou e-mail <input name="identifier" autocomplete="username" maxlength="254" required></label>
+      <label>Senha <input name="password" type="password" autocomplete="current-password" maxlength="128" required></label>
+      <p id="login-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="login-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Entrar</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="edit-account" class="registration" aria-labelledby="edit-account-title">
+    <form id="edit-account-form">
+      <h2 id="edit-account-title">Editar conta</h2>
+      <label>E-mail <input name="email" type="email" autocomplete="email" maxlength="254" required></label>
+      <label>Nome de usuário <input name="username" autocomplete="username" minlength="3" maxlength="50" required></label>
+      <label>Senha atual <input name="currentPassword" type="password" autocomplete="current-password" maxlength="128" required></label>
+      <label>Nova senha (opcional) <input name="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128"></label>
+      <label>Confirme a nova senha <input name="passwordConfirmation" type="password" autocomplete="new-password" maxlength="128"></label>
+      <small>Se quiser alterar a senha, use pelo menos 12 caracteres.</small>
+      <p id="edit-account-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="edit-account-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="move-note-dialog" class="registration" aria-labelledby="move-note-title">
+    <form id="move-note-form">
+      <h2 id="move-note-title">Mover para pasta</h2>
+      <label for="move-note-folder">Pasta</label>
+      <select id="move-note-folder" name="folderId"></select>
+      <label id="move-note-new-folder" hidden>
+        Nome da nova pasta
+        <input id="move-note-folder-name" maxlength="80" disabled>
+      </label>
+      <p id="move-note-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="move-note-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="remove-folder-dialog" class="registration" aria-labelledby="remove-folder-title" aria-describedby="remove-folder-description">
+    <form id="remove-folder-form">
+      <h2 id="remove-folder-title">Excluir pasta?</h2>
+      <div id="remove-folder-description">
+        A pasta <strong id="remove-folder-name"></strong> será excluída. As notas e os códigos ficam em <strong>Sem pasta</strong>.
+      </div>
+      <p id="remove-folder-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="remove-folder-cancel" autofocus>Cancelar</button>
+        <button type="submit" class="btn btn-secondary danger-action">Excluir pasta</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="delete-note-dialog" class="registration" aria-labelledby="delete-note-title" aria-describedby="delete-note-description">
+    <form id="delete-note-form">
+      <h2 id="delete-note-title">Excluir nota?</h2>
+      <div id="delete-note-description">
+        A exclusão de <strong id="delete-note-name"></strong> é permanente.
+      </div>
+      <p id="delete-note-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="delete-note-cancel" autofocus>Cancelar</button>
+        <button type="submit" class="btn btn-secondary danger-action">Excluir nota</button>
+      </div>
+    </form>
+  </dialog>
+  <script src="/app.js?v=delete-note-dialog"></script>
 </body>
 </html>

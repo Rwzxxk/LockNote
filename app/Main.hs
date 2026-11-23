@@ -53,14 +53,24 @@ module Main (main) where
 -- Em Haskell cada import diz de onde vem cada nome. "qualified ... as T"
 -- obriga a escrever T.strip, T.null etc., o que evita conflito de nomes.
 
+import Control.Monad (when)
 import Data.Aeson                     -- JSON: ToJSON, FromJSON, object, (.=) ...
+import Crypto.Hash (Digest, SHA256, hash)
+import Crypto.KDF.PBKDF2 (Parameters(..), fastPBKDF2_SHA256)
+import Crypto.Random (getRandomBytes)
+import Data.ByteArray (constEq)
+import Data.ByteArray.Encoding (Base(Base16), convertToBase)
+import qualified Data.ByteString as BS
+import Data.Char (isAsciiLower, isDigit)
+import Data.List (find)
 import Data.Maybe (fromMaybe)         -- fromMaybe padrao x: usa o padrão quando x é Nothing
 import Data.Text (Text)               -- tipo de texto eficiente (Unicode)
 import qualified Data.Text as T       -- funções sobre Text (strip, null ...)
+import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Lazy as TL -- Text "preguiçoso", usado pelo Scotty
-import Data.Time (UTCTime, getCurrentTime)   -- datas e hora atual (UTC)
+import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Database.SQLite.Simple                -- Connection, query, execute ...
-import Network.HTTP.Types.Status (status201, status204, status400, status404)
+import Network.HTTP.Types.Status (status201, status204, status400, status401, status404, status409)
 import Network.Wai.Middleware.Static (addBase, noDots, staticPolicy, (>->))
 import System.Environment (lookupEnv) -- lê variáveis de ambiente (PORT, NOTES_DB)
 import Text.Read (readMaybe)          -- converte texto em número sem quebrar se for inválido
@@ -89,6 +99,8 @@ data Note = Note
   , noteLanguage :: Text      -- linguagem detectada pelo front-end ("" se nenhuma)
   , noteCreated  :: UTCTime   -- quando foi criada
   , noteUpdated  :: UTCTime   -- última edição (usada para ordenar a lista)
+  , noteFolderId :: Maybe Int
+  , notePinned  :: Bool
   }
 
 -- | Como transformar uma LINHA do resultado SQL numa Note.
@@ -101,7 +113,7 @@ data Note = Note
 -- lê a, b e c e passa os três para o construtor Note. Se alguma coluna
 -- tiver o tipo errado, a leitura inteira falha com um erro claro.
 instance FromRow Note where
-  fromRow = Note <$> field <*> field <*> field <*> field <*> field <*> field <*> field
+  fromRow = Note <$> field <*> field <*> field <*> field <*> field <*> field <*> field <*> field <*> field
 
 -- | Como transformar uma Note em JSON para enviar ao navegador.
 --
@@ -118,6 +130,8 @@ instance ToJSON Note where
     , "language"  .= noteLanguage n
     , "createdAt" .= noteCreated n
     , "updatedAt" .= noteUpdated n
+    , "folderId"  .= noteFolderId n
+    , "pinned"    .= notePinned n
     ]
 
 -- | O que o cliente pode ENVIAR ao criar (POST) ou editar (PUT) uma nota.
@@ -130,6 +144,7 @@ data NoteInput = NoteInput
   , inContent  :: Text
   , inKind     :: Text
   , inLanguage :: Text
+  , inFolderId :: Maybe Int
   }
 
 -- | Como ler um NoteInput a partir do JSON recebido.
@@ -150,6 +165,7 @@ instance FromJSON NoteInput where
       <*> o .:? "content"  .!= ""
       <*> o .:? "kind"     .!= "text"
       <*> o .:? "language" .!= ""
+      <*> o .:? "folderId"
 
 -- | Regra de negócio: o tipo da nota só pode ser "text" ou "code".
 -- (O banco também garante isso com um CHECK, veja initDb. Validamos aqui
@@ -158,6 +174,179 @@ validKind :: Text -> Bool
 validKind k = k `elem` ["text", "code"]
 -- `elem` entre crases é a função elem usada como operador:
 -- "k é elemento da lista [...]?"
+
+data Registration = Registration Text Text Text Text Text
+
+instance FromJSON Registration where
+  parseJSON = withObject "Registration" $ \o ->
+    Registration <$> o .: "email" <*> o .: "emailConfirmation"
+      <*> o .: "username" <*> o .: "password" <*> o .: "passwordConfirmation"
+
+registerAccount :: FilePath -> Registration -> ActionM ()
+registerAccount dbPath (Registration rawEmail confirmation rawUsername password passwordConfirmation)
+  | not (validRegistrationEmail email) = invalid "Informe um e-mail válido, como nome@exemplo.com."
+  | email /= T.toLower (T.strip confirmation) = invalid "Os e-mails precisam coincidir."
+  | T.length username < 3 || T.length username > 50 = invalid "O nome de usuário deve ter entre 3 e 50 caracteres."
+  | T.length password < 12 || T.length password > 128 = invalid "A senha deve ter entre 12 e 128 caracteres."
+  | password /= passwordConfirmation = invalid "As senhas precisam coincidir."
+  | otherwise = do
+      conflict <- liftIO $ do
+        (salt, passwordHash, iterations) <- hashPassword password
+        withConnection dbPath $ \c -> withTransaction c $ do
+          execute c
+            "INSERT INTO accounts (email, username, password_salt, password_hash, password_iterations) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING"
+            (email, username, salt, passwordHash, iterations)
+          inserted <- changes c
+          if inserted > 0
+            then pure Nothing
+            else do
+              matches <- query c
+                "SELECT EXISTS(SELECT 1 FROM accounts WHERE email = ?), EXISTS(SELECT 1 FROM accounts WHERE username = ?)"
+                (email, username) :: IO [(Int, Int)]
+              pure $ Just $ case matches of
+                [(1, 1)] -> "Este e-mail e este nome de usuário já estão cadastrados."
+                [(1, 0)] -> "Este e-mail já está cadastrado."
+                [(0, 1)] -> "Este nome de usuário já está cadastrado."
+                _ -> "Já existe uma conta com esses dados."
+      case conflict of
+        Nothing -> status status201 >> json (object ["username" .= username])
+        Just message -> status status409 >> jsonError message
+  where
+    email = T.toLower (T.strip rawEmail)
+    username = T.strip rawUsername
+    invalid message = status status400 >> jsonError message
+
+validRegistrationEmail :: Text -> Bool
+validRegistrationEmail email = T.length email <= 254 && case T.splitOn "@" email of
+  [local, domain] ->
+    T.length local <= 64
+      && all (\part -> not (T.null part) && T.all localChar part) (T.splitOn "." local)
+      && case T.splitOn "." domain of
+        labels@(_ : _ : _) -> all validLabel labels
+        _ -> False
+  _ -> False
+  where
+    letterOrDigit ch = isAsciiLower ch || isDigit ch
+    localChar ch = letterOrDigit ch || ch `elem` ("!#$%&'*+-/=?^_`{|}~" :: String)
+    validLabel label = not (T.null label)
+      && T.length label <= 63
+      && letterOrDigit (T.head label)
+      && letterOrDigit (T.last label)
+      && T.all (\ch -> letterOrDigit ch || ch == '-') label
+
+hashPassword :: Text -> IO (BS.ByteString, BS.ByteString, Int)
+hashPassword password = do
+  salt <- getRandomBytes 16
+  let iterations = 600000
+      passwordHash = fastPBKDF2_SHA256 (Parameters iterations 32) (TE.encodeUtf8 password) salt
+  pure (salt, passwordHash, iterations)
+
+verifyPassword :: Text -> BS.ByteString -> BS.ByteString -> Int -> Bool
+verifyPassword password salt expected iterations =
+  constEq expected (fastPBKDF2_SHA256 (Parameters iterations (BS.length expected)) (TE.encodeUtf8 password) salt :: BS.ByteString)
+
+data Login = Login Text Text
+
+instance FromJSON Login where
+  parseJSON = withObject "Login" $ \o -> Login <$> o .: "identifier" <*> o .: "password"
+
+startSession :: FilePath -> Login -> ActionM ()
+startSession dbPath (Login rawIdentifier password)
+  | T.null identifier || T.length identifier > 254 || T.null password || T.length password > 128 = denied
+  | otherwise = do
+      session <- liftIO $ withConnection dbPath $ \c -> do
+        accounts <- query c
+          "SELECT id, username, password_salt, password_hash, password_iterations FROM accounts WHERE email = ? OR username = ? ORDER BY email = ? DESC"
+          (email, identifier, email) :: IO [(Int, Text, BS.ByteString, BS.ByteString, Int)]
+        case find matches accounts of
+          Nothing -> pure Nothing
+          Just (accountId, username, _, passwordHash, _) -> do
+            token <- TE.decodeUtf8 . (convertToBase Base16 :: BS.ByteString -> BS.ByteString) <$> getRandomBytes 32
+            now <- getCurrentTime
+            execute c "DELETE FROM sessions WHERE expires_at <= ?" (Only now)
+            execute c "INSERT INTO sessions (token_hash, account_id, expires_at) SELECT ?, id, ? FROM accounts WHERE id = ? AND password_hash = ?"
+              (sessionHash token, addUTCTime (fromIntegral sessionLifetime) now, accountId, passwordHash)
+            inserted <- changes c
+            pure $ if inserted > 0 then Just (token, username) else Nothing
+      case session of
+        Nothing -> denied
+        Just (token, username) -> do
+          setSessionCookie token sessionLifetime
+          json (object ["username" .= username])
+  where
+    identifier = T.strip rawIdentifier
+    email = T.toLower identifier
+    matches (_, _, salt, expected, iterations) =
+      verifyPassword password salt expected iterations
+    denied = status status401 >> jsonError "Usuário, e-mail ou senha incorretos."
+
+sessionLifetime :: Int
+sessionLifetime = 7 * 24 * 60 * 60
+
+sessionHash :: Text -> BS.ByteString
+sessionHash token = convertToBase Base16 (hash (TE.encodeUtf8 token) :: Digest SHA256)
+
+setSessionCookie :: Text -> Int -> ActionM ()
+setSessionCookie token maxAge = setHeader "Set-Cookie" $ TL.fromStrict $
+  "locknote_session=" <> token <> "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" <> T.pack (show maxAge)
+
+sessionToken :: ActionM (Maybe Text)
+sessionToken = do
+  cookies <- header "Cookie"
+  pure $ cookies >>= \value ->
+    let fields = map T.strip (T.splitOn ";" (TL.toStrict value))
+    in case [token | cookie <- fields, Just token <- [T.stripPrefix "locknote_session=" cookie], T.length token == 64] of
+      [token] -> Just token
+      _ -> Nothing
+
+data AccountUpdate = AccountUpdate Text Text Text Text Text
+
+instance FromJSON AccountUpdate where
+  parseJSON = withObject "AccountUpdate" $ \o ->
+    AccountUpdate <$> o .: "email" <*> o .: "username" <*> o .: "currentPassword"
+      <*> o .:? "newPassword" .!= "" <*> o .:? "passwordConfirmation" .!= ""
+
+updateAccount :: FilePath -> AccountUpdate -> ActionM ()
+updateAccount dbPath (AccountUpdate rawEmail rawUsername currentPassword newPassword confirmation)
+  | not (validRegistrationEmail email) = invalid "Informe um e-mail válido, como nome@exemplo.com."
+  | T.length username < 3 || T.length username > 50 = invalid "O nome de usuário deve ter entre 3 e 50 caracteres."
+  | T.null currentPassword || T.length currentPassword > 128 = invalid "Informe sua senha atual."
+  | changingPassword && (T.length newPassword < 12 || T.length newPassword > 128) =
+      invalid "A nova senha deve ter entre 12 e 128 caracteres."
+  | newPassword /= confirmation = invalid "As senhas precisam coincidir."
+  | otherwise = do
+      token <- sessionToken
+      result <- liftIO $ withConnection dbPath $ \c -> do
+        now <- getCurrentTime
+        accounts <- query c
+          "SELECT accounts.id, password_salt, password_hash, password_iterations FROM sessions JOIN accounts ON accounts.id = sessions.account_id WHERE token_hash = ? AND expires_at > ?"
+          (sessionHash <$> token, now) :: IO [(Int, BS.ByteString, BS.ByteString, Int)]
+        case accounts of
+          [(accountId, salt, passwordHash, iterations)]
+            | verifyPassword currentPassword salt passwordHash iterations -> do
+                (salt', hash', iterations') <- if changingPassword then hashPassword newPassword else pure (salt, passwordHash, iterations)
+                withTransaction c $ do
+                  updatedAt <- getCurrentTime
+                  execute c
+                    "UPDATE OR IGNORE accounts SET email = ?, username = ?, password_salt = ?, password_hash = ?, password_iterations = ? WHERE id = ? AND password_hash = ? AND EXISTS (SELECT 1 FROM sessions WHERE token_hash = ? AND expires_at > ?)"
+                    (email, username, salt', hash', iterations', accountId, passwordHash, sessionHash <$> token, updatedAt)
+                  updated <- changes c
+                  if updated == 0
+                    then pure (Left (status409, "E-mail ou nome de usuário em uso, ou a conta foi alterada. Confira os dados e tente novamente."))
+                    else do
+                      when changingPassword $
+                        execute c "DELETE FROM sessions WHERE account_id = ? AND token_hash <> ?" (accountId, sessionHash <$> token)
+                      pure (Right ())
+            | otherwise -> pure (Left (status401, "A senha atual está incorreta."))
+          _ -> pure (Left (status401, "Entre na sua conta para editar seus dados."))
+      case result of
+        Left (code, message) -> status code >> jsonError message
+        Right () -> json (object ["username" .= username, "email" .= email])
+  where
+    email = T.toLower (T.strip rawEmail)
+    username = T.strip rawUsername
+    changingPassword = not (T.null newPassword)
+    invalid message = status status400 >> jsonError message
 
 -- ============================================================================
 --  BANCO DE DADOS
@@ -180,6 +369,10 @@ initDb c = do
   -- WAL ("write-ahead log") permite que leituras aconteçam ao mesmo tempo
   -- que uma escrita, o que é bom para um servidor com várias requisições.
   execute_ c "PRAGMA journal_mode = WAL"
+  execute_ c
+    "CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, username TEXT NOT NULL COLLATE NOCASE UNIQUE, password_salt BLOB NOT NULL, password_hash BLOB NOT NULL, password_iterations INTEGER NOT NULL)"
+  execute_ c
+    "CREATE TABLE IF NOT EXISTS sessions (token_hash BLOB PRIMARY KEY NOT NULL, account_id INTEGER NOT NULL REFERENCES accounts(id), expires_at TEXT NOT NULL)"
 
   -- Cria a tabela só se ela ainda não existir ("IF NOT EXISTS").
   -- As barras invertidas no fim/início das linhas são a forma do Haskell
@@ -199,12 +392,78 @@ initDb c = do
     \  language   TEXT NOT NULL DEFAULT '',\
     \  created_at TEXT NOT NULL,\
     \  updated_at TEXT NOT NULL)"
+  withImmediateTransaction c $ do
+    execute_ c "CREATE TABLE IF NOT EXISTS folders (id INTEGER PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, color TEXT NOT NULL DEFAULT 'default')"
+    columns <- query_ c "PRAGMA table_info(folders)" :: IO [(Int, Text, Text, Int, Maybe Text, Int)]
+    when (not (any (\(_, name, _, _, _, _) -> name == "color") columns)) $
+      execute_ c "ALTER TABLE folders ADD COLUMN color TEXT NOT NULL DEFAULT 'default'"
+  execute_ c "CREATE TABLE IF NOT EXISTS folder_notes (note_id INTEGER PRIMARY KEY REFERENCES notes(id), folder_id INTEGER NOT NULL REFERENCES folders(id))"
+  execute_ c "CREATE INDEX IF NOT EXISTS folder_notes_folder_id ON folder_notes(folder_id)"
+  execute_ c "CREATE TABLE IF NOT EXISTS pinned_notes (note_id INTEGER PRIMARY KEY REFERENCES notes(id))"
 
 -- | Início comum de todos os SELECTs.
 -- A ORDEM das colunas aqui tem que bater com a ordem dos campos de Note,
 -- porque o FromRow lê coluna por coluna, em sequência.
 selectCols :: Query
-selectCols = "SELECT id, title, content, kind, language, created_at, updated_at FROM notes"
+selectCols = "SELECT id, title, content, kind, language, created_at, updated_at, folder_id, EXISTS (SELECT 1 FROM pinned_notes WHERE note_id = notes.id) AS pinned FROM notes LEFT JOIN folder_notes ON note_id = id"
+
+noteOrder :: Query
+noteOrder = " ORDER BY pinned DESC, updated_at DESC, id DESC"
+
+data Folder = Folder Int Text Text Int Int
+
+instance FromRow Folder where
+  fromRow = Folder <$> field <*> field <*> field <*> field <*> field
+
+instance ToJSON Folder where
+  toJSON (Folder i name color texts codes) = object
+    ["id" .= i, "name" .= name, "color" .= color, "textCount" .= texts, "codeCount" .= codes]
+
+data FolderInput = FolderInput Text Text
+
+instance FromJSON FolderInput where
+  parseJSON = withObject "FolderInput" $ \o -> FolderInput <$> o .: "name" <*> o .:? "color" .!= "default"
+
+withFolderInput :: (Text -> Text -> ActionM ()) -> ActionM ()
+withFolderInput action = do
+  FolderInput rawName color <- jsonData
+  let name = T.strip rawName
+  if T.null name || T.length name > 80
+    then status status400 >> jsonError "Informe um nome de pasta com até 80 caracteres."
+    else if color `elem` ["default", "blue", "green", "orange", "pink", "purple"]
+      then action name color
+      else status status400 >> jsonError "Selecione uma cor válida."
+
+newtype FolderMove = FolderMove (Maybe Int)
+
+instance FromJSON FolderMove where
+  parseJSON = withObject "FolderMove" $ \o -> FolderMove <$> o .: "folderId"
+
+newtype NotePin = NotePin Bool
+
+instance FromJSON NotePin where
+  parseJSON = withObject "NotePin" $ \o -> NotePin <$> o .: "pinned"
+
+setNotePin :: Connection -> Int -> Bool -> IO (Maybe Note)
+setNotePin c i pinned = withTransaction c $ do
+  if pinned
+    then execute c "INSERT INTO pinned_notes (note_id) SELECT id FROM notes WHERE id = ? ON CONFLICT DO NOTHING" (Only i)
+    else execute c "DELETE FROM pinned_notes WHERE note_id = ?" (Only i)
+  getNote c i
+
+listFolders :: Connection -> IO [Folder]
+listFolders c = query_ c
+  "SELECT folders.id, name, color, COUNT(CASE WHEN kind = 'text' THEN 1 END), COUNT(CASE WHEN kind = 'code' THEN 1 END) FROM folders LEFT JOIN folder_notes ON folder_id = folders.id LEFT JOIN notes ON notes.id = note_id GROUP BY folders.id ORDER BY name"
+
+moveNoteToFolder :: Connection -> Int -> Maybe Int -> IO (Maybe Note)
+moveNoteToFolder c i destination = withTransaction c $ do
+  case destination of
+    Nothing -> execute c "DELETE FROM folder_notes WHERE note_id = ?" (Only i)
+    Just folderId -> execute c
+      "INSERT INTO folder_notes (note_id, folder_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM notes WHERE id = ?) AND EXISTS (SELECT 1 FROM folders WHERE id = ?) ON CONFLICT(note_id) DO UPDATE SET folder_id = excluded.folder_id"
+      (i, folderId, i, folderId)
+  note <- getNote c i
+  pure $ note >>= \n -> if noteFolderId n == destination then Just n else Nothing
 
 -- | Lista as notas, das editadas mais recentemente para as mais antigas.
 --
@@ -220,10 +479,10 @@ listNotes c mq = case T.strip <$> mq of     -- tira espaços das pontas do termo
   -- "Just q | condição" só entra neste caso se houver termo E ele não for vazio
   Just q | not (T.null q) ->
     let pat = "%" <> q <> "%"                -- "<>" concatena textos
-    in query c (selectCols <> " WHERE title LIKE ? OR content LIKE ? OR language LIKE ? ORDER BY updated_at DESC")
+    in query c (selectCols <> " WHERE title LIKE ? OR content LIKE ? OR language LIKE ?" <> noteOrder)
          (pat, pat, pat)                     -- um valor para cada "?"
   -- "_" significa "qualquer outro caso" (Nothing ou termo vazio)
-  _ -> query_ c (selectCols <> " ORDER BY updated_at DESC")
+  _ -> query_ c (selectCols <> noteOrder)
   -- query  = SELECT com parâmetros;  query_ = SELECT sem parâmetros
 
 -- | Busca uma nota pelo id. Devolve Nothing se ela não existir.
@@ -241,13 +500,16 @@ getNote c i = do
 -- | Insere uma nota nova e devolve a nota como ficou gravada no banco
 -- (já com o id e as datas gerados).
 createNote :: Connection -> NoteInput -> IO (Maybe Note)
-createNote c n = do
+createNote c n = withTransaction c $ do
   now <- getCurrentTime        -- "<-" executa a ação IO e guarda o resultado
   execute c
-    "INSERT INTO notes (title, content, kind, language, created_at, updated_at) VALUES (?,?,?,?,?,?)"
-    (inTitle n, inContent n, inKind n, inLanguage n, now, now)
-  i <- lastInsertRowId c       -- id que o AUTOINCREMENT acabou de gerar
-  getNote c (fromIntegral i)   -- relê a nota; fromIntegral converte Int64 -> Int
+    "INSERT INTO notes (title, content, kind, language, created_at, updated_at) SELECT ?,?,?,?,?,? WHERE ? IS NULL OR EXISTS (SELECT 1 FROM folders WHERE id = ?)"
+    (inTitle n, inContent n, inKind n, inLanguage n, now, now, inFolderId n, inFolderId n)
+  inserted <- changes c
+  if inserted == 0 then pure Nothing else do
+    i <- fromIntegral <$> lastInsertRowId c
+    mapM_ (\folderId -> execute c "INSERT INTO folder_notes (note_id, folder_id) VALUES (?,?)" (i :: Int, folderId)) (inFolderId n)
+    getNote c i
 
 -- | Atualiza uma nota existente. Devolve Nothing se o id não existir.
 -- O created_at não muda; só o updated_at recebe a hora atual.
@@ -264,7 +526,9 @@ updateNote c i n = do
 
 -- | Apaga uma nota. Devolve True se apagou, False se o id não existia.
 deleteNote :: Connection -> Int -> IO Bool
-deleteNote c i = do
+deleteNote c i = withTransaction c $ do
+  execute c "DELETE FROM pinned_notes WHERE note_id = ?" (Only i)
+  execute c "DELETE FROM folder_notes WHERE note_id = ?" (Only i)
   execute c "DELETE FROM notes WHERE id = ?" (Only i)
   -- (> 0) é uma função "maior que zero" e <$> a aplica ao resultado de
   -- "changes c" sem precisar de uma variável intermediária.
@@ -368,6 +632,35 @@ main = do
     -- Se o arquivo não existir, a requisição segue para as rotas abaixo.
     middleware $ staticPolicy (noDots >-> addBase "static")
 
+    post "/api/accounts" $ jsonData >>= registerAccount dbPath
+
+    post "/api/session" $ do
+      setHeader "Cache-Control" "no-store"
+      jsonData >>= startSession dbPath
+
+    get "/api/session" $ do
+      setHeader "Cache-Control" "no-store"
+      token <- sessionToken
+      users <- case token of
+        Nothing -> pure []
+        Just value -> db $ \c -> do
+          now <- getCurrentTime
+          query c "SELECT username, email FROM sessions JOIN accounts ON accounts.id = sessions.account_id WHERE token_hash = ? AND expires_at > ?"
+            (sessionHash value, now)
+      case users :: [(Text, Text)] of
+        [(username, email)] -> json (object ["username" .= username, "email" .= email])
+        _ -> json (object ["username" .= Null])
+
+    put "/api/account" $ do
+      setHeader "Cache-Control" "no-store"
+      jsonData >>= updateAccount dbPath
+
+    delete "/api/session" $ do
+      token <- sessionToken
+      mapM_ (\value -> db $ \c -> execute c "DELETE FROM sessions WHERE token_hash = ?" (Only (sessionHash value))) token
+      setSessionCookie "" 0
+      status status204
+
     -- Página principal: devolve o index.html do front-end.
     get "/" $ do
       setHeader "Content-Type" "text/html; charset=utf-8"
@@ -382,6 +675,56 @@ main = do
       q <- queryParamMaybe "q"
       json =<< db (`listNotes` q)
 
+    get "/api/folders" $ json =<< db listFolders
+
+    post "/api/folders" $ withFolderInput $ \name color -> do
+      folder <- db $ \c -> do
+        execute c "INSERT INTO folders (name, color) VALUES (?,?) ON CONFLICT DO NOTHING" (name, color)
+        inserted <- changes c
+        if inserted > 0
+          then do
+            i <- fromIntegral <$> lastInsertRowId c
+            pure (Just (Folder i name color 0 0))
+          else pure Nothing
+      maybe (status status409 >> jsonError "Já existe uma pasta com esse nome.")
+        (\created -> status status201 >> json created) folder
+
+    put "/api/folders/:id" $ withId $ \i -> withFolderInput $ \name color -> do
+      outcome <- db $ \c -> withImmediateTransaction c $ do
+        execute c "UPDATE OR IGNORE folders SET name = ?, color = ? WHERE id = ?" (name, color, i)
+        updated <- changes c
+        if updated > 0
+          then pure Nothing
+          else do
+            existing <- query c "SELECT id FROM folders WHERE id = ?" (Only i) :: IO [Only Int]
+            pure $ Just $ if null existing
+              then (status404, "Pasta não encontrada.")
+              else (status409, "Já existe uma pasta com esse nome.")
+      case outcome of
+        Nothing -> json (object ["id" .= i, "name" .= name, "color" .= color])
+        Just (code, message) -> status code >> jsonError message
+
+    get "/api/folders/:id/notes" $ withId $ \i ->
+      json =<< db (\c -> query c (selectCols <> " WHERE folder_id = ?" <> noteOrder) (Only i) :: IO [Note])
+
+    delete "/api/folders/:id" $ withId $ \i -> do
+      removed <- db $ \c -> withTransaction c $ do
+        execute c "DELETE FROM folder_notes WHERE folder_id = ?" (Only i)
+        execute c "DELETE FROM folders WHERE id = ?" (Only i)
+        (> 0) <$> changes c
+      if removed
+        then status status204
+        else status status404 >> jsonError "Pasta não encontrada."
+
+    put "/api/notes/:id/pin" $ withId $ \i -> do
+      NotePin pinned <- jsonData
+      db (\c -> setNotePin c i pinned) >>= maybe notFound404 json
+
+    put "/api/notes/:id/folder" $ withId $ \i -> do
+      FolderMove destination <- jsonData
+      db (\c -> moveNoteToFolder c i destination) >>=
+        maybe (status status404 >> jsonError "Nota ou pasta não encontrada.") json
+
     -- GET /api/notes/:id  → uma nota (200) ou 404
     -- ">>=" encadeia: executa a busca e passa o resultado (Maybe Note) para
     -- "maybe notFound404 json": se for Nothing responde 404, se for
@@ -391,7 +734,7 @@ main = do
 
     -- POST /api/notes  → cria a nota e responde 201 Created com ela.
     post "/api/notes" $ withInput $ \n ->
-      db (`createNote` n) >>= maybe notFound404 (\note -> status status201 >> json note)
+      db (`createNote` n) >>= maybe (status status404 >> jsonError "Pasta não encontrada.") (\note -> status status201 >> json note)
 
     -- PUT /api/notes/:id  → atualiza: valida o id, depois o corpo.
     -- Responde 200 com a nota atualizada, ou 404 se o id não existir.
