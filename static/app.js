@@ -38,7 +38,8 @@ const api = {
   update: (id, n) => request('PUT', `/api/notes/${id}`, n),
   remove: (id) => request('DELETE', `/api/notes/${id}`),
   folders: () => request('GET', '/api/folders'),
-  createFolder: (name) => request('POST', '/api/folders', { name }),
+  createFolder: (name, color) => request('POST', '/api/folders', { name, color }),
+  updateFolder: (id, name, color) => request('PUT', `/api/folders/${id}`, { name, color }),
   folderNotes: (id) => request('GET', `/api/folders/${id}/notes`),
   moveNote: (id, folderId) => request('PUT', `/api/notes/${id}/folder`, { folderId }),
 };
@@ -48,6 +49,7 @@ const state = {
   notes: [],
   current: null,   // nota aberta (cópia local editável)
   openFolder: null,
+  noteFolderOrigin: null,
   filter: 'all',
   query: '',
   saveTimer: null,
@@ -62,6 +64,7 @@ const el = {
   search: $('#search'),
   empty: $('#empty'),
   foldersView: $('#folders-view'),
+  noteFolderBack: $('#note-folder-back'),
   editor: $('#editor'),
   tools: $('#note-tools'),
   statusbar: $('#statusbar'),
@@ -363,6 +366,7 @@ function showEditor(show) {
   el.editor.hidden = !show;
   el.tools.hidden = !show;
   el.statusbar.hidden = !show;
+  el.noteFolderBack.hidden = !show || !state.noteFolderOrigin;
   if (!show) {
     el.crumbKind.textContent = 'Notas';
     el.crumbSep2.hidden = true;
@@ -372,12 +376,13 @@ function showEditor(show) {
 
 let folderNavigation = 0;
 
-async function openNote(id, folderNote = null) {
+async function openNote(id, { note, folder } = {}) {
   folderNavigation++;
   if (!await flushSave()) return;
-  const n = folderNote || state.notes.find((x) => x.id === id);
+  const n = note || state.notes.find((x) => x.id === id);
   if (!n) return;
   state.current = { ...n };
+  state.noteFolderOrigin = folder || null;
   el.title.value = n.title;
   el.content.value = n.content;
   el.content.scrollTop = 0;
@@ -389,13 +394,14 @@ async function openNote(id, folderNote = null) {
 }
 
 async function newNote(kind) {
-  const folderId = el.foldersView.hidden ? null : state.openFolder?.id ?? null;
+  const folder = el.foldersView.hidden ? null : state.openFolder;
+  const folderId = folder?.id ?? null;
   if (!await flushSave()) return;
   try {
     const n = await api.create({ title: '', content: '', kind, language: '', folderId });
     state.notes.unshift(n);
     if (state.filter !== 'all' && state.filter !== kind) setFilter('all');
-    await openNote(n.id);
+    await openNote(n.id, { note: n, folder });
     if (state.current?.id === n.id) el.title.focus();
   } catch (e) {
     toast('Não foi possível criar a nota');
@@ -404,16 +410,20 @@ async function newNote(kind) {
 
 const folderForm = $('#folder-form');
 const folderFormButton = $('#show-folder-form');
+const editFolderButton = $('#edit-folder');
+const folderColorPreview = $('#folder-color-preview');
+const folderSubmit = folderForm.querySelector('[type="submit"]');
 const folderGrid = $('#folders-grid');
 const folderEmpty = $('#folders-empty');
 const folderError = $('#folder-error');
 const folderBack = $('#folder-back');
 const folderTitle = $('#folders-title');
 
-function addFolderCard(icon, title, subtitle, onClick) {
+function addFolderCard(icon, title, subtitle, onClick, color) {
   const card = document.createElement('button');
   card.type = 'button';
   card.className = 'folder-card';
+  if (color) card.dataset.color = color;
   card.innerHTML = icon;
   const label = document.createElement('strong');
   const details = document.createElement('small');
@@ -431,6 +441,7 @@ async function openFolders(folder = null) {
     if (navigation !== folderNavigation || !await flushSave() || navigation !== folderNavigation) return;
     state.openFolder = folder;
     state.current = null;
+    state.noteFolderOrigin = null;
     showEditor(false);
     el.empty.hidden = true;
     el.foldersView.hidden = false;
@@ -449,11 +460,11 @@ async function openFolders(folder = null) {
         const type = item.kind === 'code' ? 'Código' : 'Nota';
         const preview = firstLine(item.content);
         addFolderCard(ICONS[item.kind] || ICONS.text, item.title || 'Sem título',
-          preview ? `${type} · ${preview}` : type, () => openNote(item.id, item));
+          preview ? `${type} · ${preview}` : type, () => openNote(item.id, { note: item, folder }));
       } else {
         const texts = `${item.textCount} ${item.textCount === 1 ? 'nota' : 'notas'}`;
         const codes = `${item.codeCount} ${item.codeCount === 1 ? 'código' : 'códigos'}`;
-        addFolderCard(ICONS.folder, item.name, `${texts} · ${codes}`, () => openFolders(item));
+        addFolderCard(ICONS.folder, item.name, `${texts} · ${codes}`, () => openFolders(item), item.color || 'default');
       }
     }
     renderList();
@@ -468,26 +479,44 @@ $('#show-folders').addEventListener('click', () => openFolders());
 $('#folder-new-note').addEventListener('click', () => newNote('text'));
 $('#folder-new-code').addEventListener('click', () => newNote('code'));
 folderBack.addEventListener('click', () => openFolders());
-folderFormButton.addEventListener('click', () => {
+el.noteFolderBack.addEventListener('click', () => {
+  if (state.noteFolderOrigin) return openFolders(state.noteFolderOrigin);
+});
+function toggleFolderForm(folder = null) {
   folderForm.hidden = !folderForm.hidden;
-  if (!folderForm.hidden) folderForm.elements.name.focus();
+  if (folderForm.hidden) return;
+  folderError.hidden = true;
+  folderForm.elements.name.value = folder?.name || '';
+  folderForm.elements.color.value = folder?.color || 'default';
+  folderColorPreview.dataset.color = folderForm.elements.color.value;
+  folderSubmit.textContent = folder ? 'Salvar alterações' : 'Criar pasta';
+  folderForm.elements.name.focus();
+}
+folderFormButton.addEventListener('click', () => toggleFolderForm());
+editFolderButton.addEventListener('click', () => toggleFolderForm(state.openFolder));
+folderForm.elements.color.addEventListener('change', () => {
+  folderColorPreview.dataset.color = folderForm.elements.color.value;
 });
 folderForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const button = folderForm.querySelector('[type="submit"]');
-  if (button.disabled) return;
+  if (folderSubmit.disabled) return;
+  const folder = state.openFolder;
+  const { name, color } = Object.fromEntries(new FormData(folderForm));
   const navigation = folderNavigation;
-  button.disabled = true;
+  folderSubmit.disabled = true;
   folderError.hidden = true;
   try {
-    await api.createFolder(folderForm.elements.name.value);
-    folderForm.reset();
-    if (navigation === folderNavigation) await openFolders();
+    const saved = await (folder ? api.updateFolder(folder.id, name, color) : api.createFolder(name, color));
+    if (navigation === folderNavigation) {
+      await openFolders(folder ? { ...folder, ...saved } : null);
+    }
   } catch (error) {
-    folderError.textContent = error.message;
-    folderError.hidden = false;
+    if (navigation === folderNavigation) {
+      folderError.textContent = error.message;
+      folderError.hidden = false;
+    }
   } finally {
-    button.disabled = false;
+    folderSubmit.disabled = false;
   }
 });
 

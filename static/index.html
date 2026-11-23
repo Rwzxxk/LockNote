@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-  <link rel="stylesheet" href="/style.css?v=note-folder">
+  <link rel="stylesheet" href="/style.css?v=folder-back">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -137,6 +137,7 @@
             <h1 id="folders-title" tabindex="-1">Pastas</h1>
             <button type="button" class="btn btn-primary" id="show-folder-form">Nova pasta</button>
             <div class="folder-actions" id="folder-actions" hidden>
+              <button type="button" class="btn btn-secondary" id="edit-folder">Editar pasta</button>
               <button type="button" class="btn btn-primary" id="folder-new-note">Nova nota</button>
               <button type="button" class="btn btn-secondary" id="folder-new-code">Novo código</button>
             </div>
@@ -144,6 +145,16 @@
           <form id="folder-form" class="folder-form" hidden>
             <label for="folder-name">Nome da pasta</label>
             <input id="folder-name" name="name" maxlength="80" required>
+            <label for="folder-color">Cor</label>
+            <span class="folder-color-preview" id="folder-color-preview" aria-hidden="true"></span>
+            <select id="folder-color" name="color">
+              <option value="default">Padrão</option>
+              <option value="blue">Azul</option>
+              <option value="green">Verde</option>
+              <option value="orange">Laranja</option>
+              <option value="pink">Rosa</option>
+              <option value="purple">Roxo</option>
+            </select>
             <button type="submit" class="btn btn-primary">Criar pasta</button>
             <p id="folder-error" role="alert" hidden></p>
           </form>
@@ -177,6 +188,7 @@
 
         <!-- Editor -->
         <article id="editor" class="editor" hidden>
+          <button type="button" class="btn btn-secondary note-back" id="note-folder-back" hidden>← Voltar para a pasta</button>
           <input id="title" class="title" placeholder="Sem título" autocomplete="off" aria-label="Título">
           <div class="meta">
             <span class="pill" id="meta-kind"></span>
@@ -278,6 +290,6 @@
       </div>
     </form>
   </dialog>
-  <script src="/app.js?v=code-folder"></script>
+  <script src="/app.js?v=folder-back"></script>
 </body>
 </html>

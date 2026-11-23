@@ -390,7 +390,11 @@ initDb c = do
     \  language   TEXT NOT NULL DEFAULT '',\
     \  created_at TEXT NOT NULL,\
     \  updated_at TEXT NOT NULL)"
-  execute_ c "CREATE TABLE IF NOT EXISTS folders (id INTEGER PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE)"
+  withImmediateTransaction c $ do
+    execute_ c "CREATE TABLE IF NOT EXISTS folders (id INTEGER PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, color TEXT NOT NULL DEFAULT 'default')"
+    columns <- query_ c "PRAGMA table_info(folders)" :: IO [(Int, Text, Text, Int, Maybe Text, Int)]
+    when (not (any (\(_, name, _, _, _, _) -> name == "color") columns)) $
+      execute_ c "ALTER TABLE folders ADD COLUMN color TEXT NOT NULL DEFAULT 'default'"
   execute_ c "CREATE TABLE IF NOT EXISTS folder_notes (note_id INTEGER PRIMARY KEY REFERENCES notes(id), folder_id INTEGER NOT NULL REFERENCES folders(id))"
   execute_ c "CREATE INDEX IF NOT EXISTS folder_notes_folder_id ON folder_notes(folder_id)"
 
@@ -400,19 +404,29 @@ initDb c = do
 selectCols :: Query
 selectCols = "SELECT id, title, content, kind, language, created_at, updated_at, folder_id FROM notes LEFT JOIN folder_notes ON note_id = id"
 
-data Folder = Folder Int Text Int Int
+data Folder = Folder Int Text Text Int Int
 
 instance FromRow Folder where
-  fromRow = Folder <$> field <*> field <*> field <*> field
+  fromRow = Folder <$> field <*> field <*> field <*> field <*> field
 
 instance ToJSON Folder where
-  toJSON (Folder i name texts codes) = object
-    ["id" .= i, "name" .= name, "textCount" .= texts, "codeCount" .= codes]
+  toJSON (Folder i name color texts codes) = object
+    ["id" .= i, "name" .= name, "color" .= color, "textCount" .= texts, "codeCount" .= codes]
 
-newtype FolderInput = FolderInput Text
+data FolderInput = FolderInput Text Text
 
 instance FromJSON FolderInput where
-  parseJSON = withObject "FolderInput" $ \o -> FolderInput <$> o .: "name"
+  parseJSON = withObject "FolderInput" $ \o -> FolderInput <$> o .: "name" <*> o .:? "color" .!= "default"
+
+withFolderInput :: (Text -> Text -> ActionM ()) -> ActionM ()
+withFolderInput action = do
+  FolderInput rawName color <- jsonData
+  let name = T.strip rawName
+  if T.null name || T.length name > 80
+    then status status400 >> jsonError "Informe um nome de pasta com até 80 caracteres."
+    else if color `elem` ["default", "blue", "green", "orange", "pink", "purple"]
+      then action name color
+      else status status400 >> jsonError "Selecione uma cor válida."
 
 newtype FolderMove = FolderMove (Maybe Int)
 
@@ -421,7 +435,7 @@ instance FromJSON FolderMove where
 
 listFolders :: Connection -> IO [Folder]
 listFolders c = query_ c
-  "SELECT folders.id, name, COUNT(CASE WHEN kind = 'text' THEN 1 END), COUNT(CASE WHEN kind = 'code' THEN 1 END) FROM folders LEFT JOIN folder_notes ON folder_id = folders.id LEFT JOIN notes ON notes.id = note_id GROUP BY folders.id ORDER BY name"
+  "SELECT folders.id, name, color, COUNT(CASE WHEN kind = 'text' THEN 1 END), COUNT(CASE WHEN kind = 'code' THEN 1 END) FROM folders LEFT JOIN folder_notes ON folder_id = folders.id LEFT JOIN notes ON notes.id = note_id GROUP BY folders.id ORDER BY name"
 
 moveNoteToFolder :: Connection -> Int -> Maybe Int -> IO (Maybe Note)
 moveNoteToFolder c i destination = withTransaction c $ do
@@ -644,22 +658,32 @@ main = do
 
     get "/api/folders" $ json =<< db listFolders
 
-    post "/api/folders" $ do
-      FolderInput rawName <- jsonData
-      let name = T.strip rawName
-      if T.null name || T.length name > 80
-        then status status400 >> jsonError "Informe um nome de pasta com até 80 caracteres."
-        else do
-          folder <- db $ \c -> do
-            execute c "INSERT INTO folders (name) VALUES (?) ON CONFLICT DO NOTHING" (Only name)
-            inserted <- changes c
-            if inserted > 0
-              then do
-                i <- fromIntegral <$> lastInsertRowId c
-                pure (Just (Folder i name 0 0))
-              else pure Nothing
-          maybe (status status409 >> jsonError "Já existe uma pasta com esse nome.")
-            (\created -> status status201 >> json created) folder
+    post "/api/folders" $ withFolderInput $ \name color -> do
+      folder <- db $ \c -> do
+        execute c "INSERT INTO folders (name, color) VALUES (?,?) ON CONFLICT DO NOTHING" (name, color)
+        inserted <- changes c
+        if inserted > 0
+          then do
+            i <- fromIntegral <$> lastInsertRowId c
+            pure (Just (Folder i name color 0 0))
+          else pure Nothing
+      maybe (status status409 >> jsonError "Já existe uma pasta com esse nome.")
+        (\created -> status status201 >> json created) folder
+
+    put "/api/folders/:id" $ withId $ \i -> withFolderInput $ \name color -> do
+      outcome <- db $ \c -> withImmediateTransaction c $ do
+        execute c "UPDATE OR IGNORE folders SET name = ?, color = ? WHERE id = ?" (name, color, i)
+        updated <- changes c
+        if updated > 0
+          then pure Nothing
+          else do
+            existing <- query c "SELECT id FROM folders WHERE id = ?" (Only i) :: IO [Only Int]
+            pure $ Just $ if null existing
+              then (status404, "Pasta não encontrada.")
+              else (status409, "Já existe uma pasta com esse nome.")
+      case outcome of
+        Nothing -> json (object ["id" .= i, "name" .= name, "color" .= color])
+        Just (code, message) -> status code >> jsonError message
 
     get "/api/folders/:id/notes" $ withId $ \i ->
       json =<< db (\c -> query c (selectCols <> " WHERE folder_id = ? ORDER BY updated_at DESC") (Only i) :: IO [Note])

@@ -265,11 +265,29 @@ kbd {
   text-align: left;
 }
 .folder-card:hover { border-color: var(--accent); }
+.folder-card,
+.folder-color-preview { --folder-color: var(--accent-text); }
+[data-color="blue"] { --folder-color: #4389ed; }
+[data-color="green"] { --folder-color: #279d6d; }
+[data-color="orange"] { --folder-color: #de831e; }
+[data-color="pink"] { --folder-color: #d9609c; }
+[data-color="purple"] { --folder-color: #9971e8; }
+.folder-card[data-color]:not([data-color="default"]) {
+  border-color: color-mix(in srgb, var(--folder-color) 55%, var(--border));
+  background: color-mix(in srgb, var(--folder-color) 8%, var(--surface));
+}
+.folder-card[data-color]:hover { border-color: var(--folder-color); }
+.folder-color-preview {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--folder-color);
+}
 .folder-card strong { overflow-wrap: anywhere; }
 .folder-card small { color: var(--fg-2); overflow-wrap: anywhere; }
-.folder-card > svg { color: var(--accent-text); width: 22px; height: 22px; }
+.folder-card > svg { color: var(--folder-color, var(--accent-text)); width: 22px; height: 22px; }
 .folder-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
-.folder-form input, #move-note-folder {
+.folder-form input, .folder-form select, #move-note-folder {
   min-width: 0;
   padding: 8px;
   border: 1px solid var(--border-strong);
@@ -543,6 +561,7 @@ kbd {
 
 /* ---------- Editor ---------- */
 .editor { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.note-back { align-self: flex-start; flex-shrink: 0; margin-bottom: 12px; }
 
 .title {
   width: 100%;
