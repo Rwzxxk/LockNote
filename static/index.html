@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-  <link rel="stylesheet" href="/style.css?v=registration">
+  <link rel="stylesheet" href="/style.css?v=guest-avatar">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -31,6 +31,7 @@
               <button type="button" id="guest-login">Login</button>
               <button type="button" id="guest-register">Cadastre-se</button>
               <button type="button" id="account-logout" hidden>Sair</button>
+              <button type="button" id="account-edit" hidden>Editar conta</button>
             </div>
           </details>
           <span class="logo-name">LockNote</span>
@@ -75,9 +76,7 @@
       <footer class="sb-foot">
         <div class="sb-account">
           <div class="sb-guest">
-            <span class="sb-avatar" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M5 20v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/></svg>
-            </span>
+            <span class="sb-avatar" id="sidebar-avatar" aria-hidden="true">🐱</span>
             <span id="account-name">Visitante</span>
           </div>
         </div>
@@ -219,6 +218,22 @@
       </div>
     </form>
   </dialog>
-  <script src="/app.js?v=login"></script>
+  <dialog id="edit-account" class="registration" aria-labelledby="edit-account-title">
+    <form id="edit-account-form">
+      <h2 id="edit-account-title">Editar conta</h2>
+      <label>E-mail <input name="email" type="email" autocomplete="email" maxlength="254" required></label>
+      <label>Nome de usuário <input name="username" autocomplete="username" minlength="3" maxlength="50" required></label>
+      <label>Senha atual <input name="currentPassword" type="password" autocomplete="current-password" maxlength="128" required></label>
+      <label>Nova senha (opcional) <input name="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128"></label>
+      <label>Confirme a nova senha <input name="passwordConfirmation" type="password" autocomplete="new-password" maxlength="128"></label>
+      <small>Se quiser alterar a senha, use pelo menos 12 caracteres.</small>
+      <p id="edit-account-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="edit-account-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+  <script src="/app.js?v=random-avatar"></script>
 </body>
 </html>

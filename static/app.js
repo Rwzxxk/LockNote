@@ -514,13 +514,14 @@ const loginCancel = $('#login-cancel');
 const loginButton = $('#guest-login');
 const registerButton = $('#guest-register');
 const logoutButton = $('#account-logout');
+const editAccountButton = $('#account-edit');
 let accountUsername;
 
 function renderAccount(username) {
   accountUsername = username;
   $('#account-name').textContent = username || 'Visitante';
   loginButton.hidden = registerButton.hidden = Boolean(username);
-  logoutButton.hidden = !username;
+  logoutButton.hidden = editAccountButton.hidden = !username;
 }
 
 function showLoginError(message) {
@@ -585,6 +586,77 @@ logoutButton.addEventListener('click', async () => {
 request('GET', '/api/session').then(({ username }) => {
   if (accountUsername === undefined) renderAccount(username);
 }).catch(() => {});
+
+const editAccount = $('#edit-account');
+const editAccountForm = $('#edit-account-form');
+const editAccountError = $('#edit-account-error');
+const editAccountSubmit = editAccountForm.querySelector('[type="submit"]');
+const editAccountCancel = $('#edit-account-cancel');
+
+function showEditAccountError(message) {
+  editAccountError.textContent = message;
+  editAccountError.hidden = !message;
+}
+
+editAccountButton.addEventListener('click', async () => {
+  editAccountButton.disabled = true;
+  try {
+    const { email, username } = await request('GET', '/api/session');
+    if (!username || !accountUsername || logoutButton.disabled) {
+      if (!username) renderAccount(null);
+      return;
+    }
+    editAccountForm.reset();
+    editAccountForm.elements.email.value = email;
+    editAccountForm.elements.username.value = username;
+    showEditAccountError('');
+    accountControl.open = false;
+    editAccount.showModal();
+  } catch {
+    toast('Não foi possível carregar os dados da conta');
+  } finally {
+    editAccountButton.disabled = false;
+  }
+});
+editAccountCancel.addEventListener('click', () => editAccount.close());
+editAccount.addEventListener('close', () => {
+  editAccountForm.reset();
+  accountToggle.focus();
+});
+editAccount.addEventListener('cancel', (event) => {
+  if (editAccountSubmit.disabled) event.preventDefault();
+});
+editAccountForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (editAccountSubmit.disabled) return;
+  const data = Object.fromEntries(new FormData(editAccountForm));
+  if (data.newPassword !== data.passwordConfirmation) {
+    showEditAccountError('As senhas precisam coincidir.');
+    return;
+  }
+  showEditAccountError('');
+  editAccountSubmit.disabled = editAccountCancel.disabled = true;
+  try {
+    const response = await fetch('/api/account', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      showEditAccountError(error?.error || 'Não foi possível atualizar a conta.');
+      return;
+    }
+    const { username } = await response.json();
+    renderAccount(username);
+    editAccount.close();
+    toast('Conta atualizada');
+  } catch {
+    showEditAccountError('Não foi possível conectar ao servidor.');
+  } finally {
+    editAccountSubmit.disabled = editAccountCancel.disabled = false;
+  }
+});
 const registration = $('#registration');
 const registrationForm = $('#registration-form');
 const registrationError = $('#registration-error');
@@ -714,7 +786,7 @@ el.search.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (registration.open || login.open) return;
+  if (registration.open || login.open || editAccount.open) return;
   if (e.key === 'Escape' && accountControl.open) {
     accountControl.open = false;
     accountToggle.focus();
@@ -744,6 +816,14 @@ window.addEventListener('beforeunload', (e) => {
 setInterval(() => { renderList(); renderMeta(); }, 60000);
 
 // ---------- Início ----------
+const sidebarAnimals = ['🐱', '🐶', '🦊', '🐼', '🐰', '🐸', '🐨', '🦉'];
+const sidebarAvatarKey = 'locknote.sidebarAvatar';
+const previousAvatar = store(sidebarAvatarKey);
+const availableAvatars = sidebarAnimals.filter((animal) => animal !== previousAvatar);
+const sidebarAvatar = availableAvatars[Math.floor(Math.random() * availableAvatars.length)];
+$('#sidebar-avatar').textContent = sidebarAvatar;
+store(sidebarAvatarKey, sidebarAvatar);
+
 if (store('locknote.sidebarCollapsed') === '1' && !isMobile()) el.app.classList.add('sidebar-collapsed');
 loadNotes().then(() => {
   if (state.notes.length) openNote(state.notes[0].id);

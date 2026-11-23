@@ -53,6 +53,7 @@ module Main (main) where
 -- Em Haskell cada import diz de onde vem cada nome. "qualified ... as T"
 -- obriga a escrever T.strip, T.null etc., o que evita conflito de nomes.
 
+import Control.Monad (when)
 import Data.Aeson                     -- JSON: ToJSON, FromJSON, object, (.=) ...
 import Crypto.Hash (Digest, SHA256, hash)
 import Crypto.KDF.PBKDF2 (Parameters(..), fastPBKDF2_SHA256)
@@ -184,9 +185,7 @@ registerAccount dbPath (Registration rawEmail confirmation rawUsername password 
   | password /= passwordConfirmation = invalid "As senhas precisam coincidir."
   | otherwise = do
       conflict <- liftIO $ do
-        salt <- getRandomBytes 16 :: IO BS.ByteString
-        let iterations = 600000
-            passwordHash = fastPBKDF2_SHA256 (Parameters iterations 32) (TE.encodeUtf8 password) salt :: BS.ByteString
+        (salt, passwordHash, iterations) <- hashPassword password
         withConnection dbPath $ \c -> withTransaction c $ do
           execute c
             "INSERT INTO accounts (email, username, password_salt, password_hash, password_iterations) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING"
@@ -229,6 +228,17 @@ validRegistrationEmail email = T.length email <= 254 && case T.splitOn "@" email
       && letterOrDigit (T.last label)
       && T.all (\ch -> letterOrDigit ch || ch == '-') label
 
+hashPassword :: Text -> IO (BS.ByteString, BS.ByteString, Int)
+hashPassword password = do
+  salt <- getRandomBytes 16
+  let iterations = 600000
+      passwordHash = fastPBKDF2_SHA256 (Parameters iterations 32) (TE.encodeUtf8 password) salt
+  pure (salt, passwordHash, iterations)
+
+verifyPassword :: Text -> BS.ByteString -> BS.ByteString -> Int -> Bool
+verifyPassword password salt expected iterations =
+  constEq expected (fastPBKDF2_SHA256 (Parameters iterations (BS.length expected)) (TE.encodeUtf8 password) salt :: BS.ByteString)
+
 data Login = Login Text Text
 
 instance FromJSON Login where
@@ -244,13 +254,14 @@ startSession dbPath (Login rawIdentifier password)
           (email, identifier, email) :: IO [(Int, Text, BS.ByteString, BS.ByteString, Int)]
         case find matches accounts of
           Nothing -> pure Nothing
-          Just (accountId, username, _, _, _) -> do
+          Just (accountId, username, _, passwordHash, _) -> do
             token <- TE.decodeUtf8 . (convertToBase Base16 :: BS.ByteString -> BS.ByteString) <$> getRandomBytes 32
             now <- getCurrentTime
             execute c "DELETE FROM sessions WHERE expires_at <= ?" (Only now)
-            execute c "INSERT INTO sessions (token_hash, account_id, expires_at) VALUES (?,?,?)"
-              (sessionHash token, accountId, addUTCTime (fromIntegral sessionLifetime) now)
-            pure (Just (token, username))
+            execute c "INSERT INTO sessions (token_hash, account_id, expires_at) SELECT ?, id, ? FROM accounts WHERE id = ? AND password_hash = ?"
+              (sessionHash token, addUTCTime (fromIntegral sessionLifetime) now, accountId, passwordHash)
+            inserted <- changes c
+            pure $ if inserted > 0 then Just (token, username) else Nothing
       case session of
         Nothing -> denied
         Just (token, username) -> do
@@ -260,7 +271,7 @@ startSession dbPath (Login rawIdentifier password)
     identifier = T.strip rawIdentifier
     email = T.toLower identifier
     matches (_, _, salt, expected, iterations) =
-      constEq expected (fastPBKDF2_SHA256 (Parameters iterations (BS.length expected)) (TE.encodeUtf8 password) salt :: BS.ByteString)
+      verifyPassword password salt expected iterations
     denied = status status401 >> jsonError "Usuário, e-mail ou senha incorretos."
 
 sessionLifetime :: Int
@@ -281,6 +292,55 @@ sessionToken = do
     in case [token | cookie <- fields, Just token <- [T.stripPrefix "locknote_session=" cookie], T.length token == 64] of
       [token] -> Just token
       _ -> Nothing
+
+data AccountUpdate = AccountUpdate Text Text Text Text Text
+
+instance FromJSON AccountUpdate where
+  parseJSON = withObject "AccountUpdate" $ \o ->
+    AccountUpdate <$> o .: "email" <*> o .: "username" <*> o .: "currentPassword"
+      <*> o .:? "newPassword" .!= "" <*> o .:? "passwordConfirmation" .!= ""
+
+updateAccount :: FilePath -> AccountUpdate -> ActionM ()
+updateAccount dbPath (AccountUpdate rawEmail rawUsername currentPassword newPassword confirmation)
+  | not (validRegistrationEmail email) = invalid "Informe um e-mail válido, como nome@exemplo.com."
+  | T.length username < 3 || T.length username > 50 = invalid "O nome de usuário deve ter entre 3 e 50 caracteres."
+  | T.null currentPassword || T.length currentPassword > 128 = invalid "Informe sua senha atual."
+  | changingPassword && (T.length newPassword < 12 || T.length newPassword > 128) =
+      invalid "A nova senha deve ter entre 12 e 128 caracteres."
+  | newPassword /= confirmation = invalid "As senhas precisam coincidir."
+  | otherwise = do
+      token <- sessionToken
+      result <- liftIO $ withConnection dbPath $ \c -> do
+        now <- getCurrentTime
+        accounts <- query c
+          "SELECT accounts.id, password_salt, password_hash, password_iterations FROM sessions JOIN accounts ON accounts.id = sessions.account_id WHERE token_hash = ? AND expires_at > ?"
+          (sessionHash <$> token, now) :: IO [(Int, BS.ByteString, BS.ByteString, Int)]
+        case accounts of
+          [(accountId, salt, passwordHash, iterations)]
+            | verifyPassword currentPassword salt passwordHash iterations -> do
+                (salt', hash', iterations') <- if changingPassword then hashPassword newPassword else pure (salt, passwordHash, iterations)
+                withTransaction c $ do
+                  updatedAt <- getCurrentTime
+                  execute c
+                    "UPDATE OR IGNORE accounts SET email = ?, username = ?, password_salt = ?, password_hash = ?, password_iterations = ? WHERE id = ? AND password_hash = ? AND EXISTS (SELECT 1 FROM sessions WHERE token_hash = ? AND expires_at > ?)"
+                    (email, username, salt', hash', iterations', accountId, passwordHash, sessionHash <$> token, updatedAt)
+                  updated <- changes c
+                  if updated == 0
+                    then pure (Left (status409, "E-mail ou nome de usuário em uso, ou a conta foi alterada. Confira os dados e tente novamente."))
+                    else do
+                      when changingPassword $
+                        execute c "DELETE FROM sessions WHERE account_id = ? AND token_hash <> ?" (accountId, sessionHash <$> token)
+                      pure (Right ())
+            | otherwise -> pure (Left (status401, "A senha atual está incorreta."))
+          _ -> pure (Left (status401, "Entre na sua conta para editar seus dados."))
+      case result of
+        Left (code, message) -> status code >> jsonError message
+        Right () -> json (object ["username" .= username, "email" .= email])
+  where
+    email = T.toLower (T.strip rawEmail)
+    username = T.strip rawUsername
+    changingPassword = not (T.null newPassword)
+    invalid message = status status400 >> jsonError message
 
 -- ============================================================================
 --  BANCO DE DADOS
@@ -508,12 +568,15 @@ main = do
         Nothing -> pure []
         Just value -> db $ \c -> do
           now <- getCurrentTime
-          query c "SELECT username FROM sessions JOIN accounts ON accounts.id = sessions.account_id WHERE token_hash = ? AND expires_at > ?"
+          query c "SELECT username, email FROM sessions JOIN accounts ON accounts.id = sessions.account_id WHERE token_hash = ? AND expires_at > ?"
             (sessionHash value, now)
-      let username = case users of
-            [Only name] -> Just (name :: Text)
-            _ -> Nothing
-      json (object ["username" .= username])
+      case users :: [(Text, Text)] of
+        [(username, email)] -> json (object ["username" .= username, "email" .= email])
+        _ -> json (object ["username" .= Null])
+
+    put "/api/account" $ do
+      setHeader "Cache-Control" "no-store"
+      jsonData >>= updateAccount dbPath
 
     delete "/api/session" $ do
       token <- sessionToken
