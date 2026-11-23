@@ -7,6 +7,7 @@ const ICONS = {
   text: '<svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg>',
   code: '<svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
   clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+  folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>',
   calendar: '<svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg>',
 };
 
@@ -25,7 +26,10 @@ async function request(method, url, body) {
     headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`${method} ${url}: ${res.status}`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => null);
+    throw new Error(error?.error || `${method} ${url}: ${res.status}`);
+  }
   return res.status === 204 ? null : res.json();
 }
 const api = {
@@ -33,12 +37,17 @@ const api = {
   create: (n) => request('POST', '/api/notes', n),
   update: (id, n) => request('PUT', `/api/notes/${id}`, n),
   remove: (id) => request('DELETE', `/api/notes/${id}`),
+  folders: () => request('GET', '/api/folders'),
+  createFolder: (name) => request('POST', '/api/folders', { name }),
+  folderNotes: (id) => request('GET', `/api/folders/${id}/notes`),
+  moveNote: (id, folderId) => request('PUT', `/api/notes/${id}/folder`, { folderId }),
 };
 
 // ---------- Estado ----------
 const state = {
   notes: [],
   current: null,   // nota aberta (cópia local editável)
+  openFolder: null,
   filter: 'all',
   query: '',
   saveTimer: null,
@@ -52,6 +61,7 @@ const el = {
   list: $('#note-list'),
   search: $('#search'),
   empty: $('#empty'),
+  foldersView: $('#folders-view'),
   editor: $('#editor'),
   tools: $('#note-tools'),
   statusbar: $('#statusbar'),
@@ -348,6 +358,7 @@ function applyKind() {
 }
 
 function showEditor(show) {
+  el.foldersView.hidden = true;
   el.empty.hidden = show;
   el.editor.hidden = !show;
   el.tools.hidden = !show;
@@ -359,9 +370,12 @@ function showEditor(show) {
   }
 }
 
-async function openNote(id) {
+let folderNavigation = 0;
+
+async function openNote(id, folderNote = null) {
+  folderNavigation++;
   if (!await flushSave()) return;
-  const n = state.notes.find((x) => x.id === id);
+  const n = folderNote || state.notes.find((x) => x.id === id);
   if (!n) return;
   state.current = { ...n };
   el.title.value = n.title;
@@ -375,9 +389,10 @@ async function openNote(id) {
 }
 
 async function newNote(kind) {
+  const folderId = el.foldersView.hidden ? null : state.openFolder?.id ?? null;
   if (!await flushSave()) return;
   try {
-    const n = await api.create({ title: '', content: '', kind, language: '' });
+    const n = await api.create({ title: '', content: '', kind, language: '', folderId });
     state.notes.unshift(n);
     if (state.filter !== 'all' && state.filter !== kind) setFilter('all');
     await openNote(n.id);
@@ -386,6 +401,151 @@ async function newNote(kind) {
     toast('Não foi possível criar a nota');
   }
 }
+
+const folderForm = $('#folder-form');
+const folderFormButton = $('#show-folder-form');
+const folderGrid = $('#folders-grid');
+const folderEmpty = $('#folders-empty');
+const folderError = $('#folder-error');
+const folderBack = $('#folder-back');
+const folderTitle = $('#folders-title');
+
+function addFolderCard(icon, title, subtitle, onClick) {
+  const card = document.createElement('button');
+  card.type = 'button';
+  card.className = 'folder-card';
+  card.innerHTML = icon;
+  const label = document.createElement('strong');
+  const details = document.createElement('small');
+  label.textContent = title;
+  details.textContent = subtitle;
+  card.append(label, details);
+  card.addEventListener('click', onClick);
+  folderGrid.append(card);
+}
+
+async function openFolders(folder = null) {
+  const navigation = ++folderNavigation;
+  try {
+    const items = await (folder ? api.folderNotes(folder.id) : api.folders());
+    if (navigation !== folderNavigation || !await flushSave() || navigation !== folderNavigation) return;
+    state.openFolder = folder;
+    state.current = null;
+    showEditor(false);
+    el.empty.hidden = true;
+    el.foldersView.hidden = false;
+    el.crumbKind.textContent = folder?.name || 'Pastas';
+    folderTitle.textContent = folder?.name || 'Pastas';
+    folderBack.hidden = !folder;
+    folderFormButton.hidden = Boolean(folder);
+    $('#folder-actions').hidden = !folder;
+    folderForm.hidden = true;
+    folderError.hidden = true;
+    folderGrid.replaceChildren();
+    folderEmpty.hidden = items.length > 0;
+    folderEmpty.textContent = folder ? 'Nenhuma nota ou código nesta pasta.' : 'Nenhuma pasta criada.';
+    for (const item of items) {
+      if (folder) {
+        const type = item.kind === 'code' ? 'Código' : 'Nota';
+        const preview = firstLine(item.content);
+        addFolderCard(ICONS[item.kind] || ICONS.text, item.title || 'Sem título',
+          preview ? `${type} · ${preview}` : type, () => openNote(item.id, item));
+      } else {
+        const texts = `${item.textCount} ${item.textCount === 1 ? 'nota' : 'notas'}`;
+        const codes = `${item.codeCount} ${item.codeCount === 1 ? 'código' : 'códigos'}`;
+        addFolderCard(ICONS.folder, item.name, `${texts} · ${codes}`, () => openFolders(item));
+      }
+    }
+    renderList();
+    closeDrawer();
+    folderTitle.focus();
+  } catch {
+    if (navigation === folderNavigation) toast('Não foi possível carregar as pastas');
+  }
+}
+
+$('#show-folders').addEventListener('click', () => openFolders());
+$('#folder-new-note').addEventListener('click', () => newNote('text'));
+$('#folder-new-code').addEventListener('click', () => newNote('code'));
+folderBack.addEventListener('click', () => openFolders());
+folderFormButton.addEventListener('click', () => {
+  folderForm.hidden = !folderForm.hidden;
+  if (!folderForm.hidden) folderForm.elements.name.focus();
+});
+folderForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = folderForm.querySelector('[type="submit"]');
+  if (button.disabled) return;
+  const navigation = folderNavigation;
+  button.disabled = true;
+  folderError.hidden = true;
+  try {
+    await api.createFolder(folderForm.elements.name.value);
+    folderForm.reset();
+    if (navigation === folderNavigation) await openFolders();
+  } catch (error) {
+    folderError.textContent = error.message;
+    folderError.hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+const moveNoteDialog = $('#move-note-dialog');
+const moveNoteForm = $('#move-note-form');
+const moveNoteSelect = $('#move-note-folder');
+const moveNoteError = $('#move-note-error');
+const moveNoteButton = $('#move-note');
+const moveNoteCancel = $('#move-note-cancel');
+const moveNoteSubmit = moveNoteForm.querySelector('[type="submit"]');
+
+moveNoteButton.addEventListener('click', async () => {
+  const note = state.current;
+  moveNoteButton.disabled = true;
+  try {
+    const folders = await api.folders();
+    if (state.current !== note) return;
+    if (!folders.length) {
+      toast('Crie uma pasta antes de mover a nota');
+      return;
+    }
+    moveNoteSelect.replaceChildren(new Option('Sem pasta', ''));
+    for (const folder of folders) moveNoteSelect.add(new Option(folder.name, folder.id));
+    moveNoteSelect.value = note.folderId ?? '';
+    moveNoteError.hidden = true;
+    moveNoteDialog.showModal();
+  } catch {
+    toast('Não foi possível carregar as pastas');
+  } finally {
+    moveNoteButton.disabled = false;
+  }
+});
+moveNoteCancel.addEventListener('click', () => moveNoteDialog.close());
+moveNoteDialog.addEventListener('cancel', (event) => {
+  if (moveNoteSubmit.disabled) event.preventDefault();
+});
+moveNoteDialog.addEventListener('close', () => moveNoteButton.focus());
+moveNoteForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const note = state.current;
+  if (moveNoteSubmit.disabled || !note) return;
+  moveNoteSubmit.disabled = moveNoteCancel.disabled = true;
+  moveNoteError.hidden = true;
+  try {
+    const destination = moveNoteSelect.value ? Number(moveNoteSelect.value) : null;
+    const moved = await api.moveNote(note.id, destination);
+    note.folderId = moved.folderId;
+    const cachedNote = state.notes.find((item) => item.id === note.id);
+    if (cachedNote) cachedNote.folderId = moved.folderId;
+    moveNoteDialog.close();
+    toast('Pasta da nota atualizada');
+  } catch (error) {
+    moveNoteError.textContent = error.message;
+    moveNoteError.hidden = false;
+  } finally {
+    moveNoteSubmit.disabled = moveNoteCancel.disabled = false;
+  }
+});
 
 // ---------- Salvamento automático ----------
 const SAVE_LABELS = { saved: 'Salvo', editing: 'Editando…', saving: 'Salvando…', error: 'Erro ao salvar — tentando de novo' };
@@ -786,7 +946,7 @@ el.search.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (registration.open || login.open || editAccount.open) return;
+  if (registration.open || login.open || editAccount.open || moveNoteDialog.open) return;
   if (e.key === 'Escape' && accountControl.open) {
     accountControl.open = false;
     accountToggle.focus();
@@ -826,5 +986,5 @@ store(sidebarAvatarKey, sidebarAvatar);
 
 if (store('locknote.sidebarCollapsed') === '1' && !isMobile()) el.app.classList.add('sidebar-collapsed');
 loadNotes().then(() => {
-  if (state.notes.length) openNote(state.notes[0].id);
+  if (state.notes.length && folderNavigation === 0) openNote(state.notes[0].id);
 });

@@ -99,6 +99,7 @@ data Note = Note
   , noteLanguage :: Text      -- linguagem detectada pelo front-end ("" se nenhuma)
   , noteCreated  :: UTCTime   -- quando foi criada
   , noteUpdated  :: UTCTime   -- última edição (usada para ordenar a lista)
+  , noteFolderId :: Maybe Int
   }
 
 -- | Como transformar uma LINHA do resultado SQL numa Note.
@@ -111,7 +112,7 @@ data Note = Note
 -- lê a, b e c e passa os três para o construtor Note. Se alguma coluna
 -- tiver o tipo errado, a leitura inteira falha com um erro claro.
 instance FromRow Note where
-  fromRow = Note <$> field <*> field <*> field <*> field <*> field <*> field <*> field
+  fromRow = Note <$> field <*> field <*> field <*> field <*> field <*> field <*> field <*> field
 
 -- | Como transformar uma Note em JSON para enviar ao navegador.
 --
@@ -128,6 +129,7 @@ instance ToJSON Note where
     , "language"  .= noteLanguage n
     , "createdAt" .= noteCreated n
     , "updatedAt" .= noteUpdated n
+    , "folderId"  .= noteFolderId n
     ]
 
 -- | O que o cliente pode ENVIAR ao criar (POST) ou editar (PUT) uma nota.
@@ -140,6 +142,7 @@ data NoteInput = NoteInput
   , inContent  :: Text
   , inKind     :: Text
   , inLanguage :: Text
+  , inFolderId :: Maybe Int
   }
 
 -- | Como ler um NoteInput a partir do JSON recebido.
@@ -160,6 +163,7 @@ instance FromJSON NoteInput where
       <*> o .:? "content"  .!= ""
       <*> o .:? "kind"     .!= "text"
       <*> o .:? "language" .!= ""
+      <*> o .:? "folderId"
 
 -- | Regra de negócio: o tipo da nota só pode ser "text" ou "code".
 -- (O banco também garante isso com um CHECK, veja initDb. Validamos aqui
@@ -386,12 +390,48 @@ initDb c = do
     \  language   TEXT NOT NULL DEFAULT '',\
     \  created_at TEXT NOT NULL,\
     \  updated_at TEXT NOT NULL)"
+  execute_ c "CREATE TABLE IF NOT EXISTS folders (id INTEGER PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE)"
+  execute_ c "CREATE TABLE IF NOT EXISTS folder_notes (note_id INTEGER PRIMARY KEY REFERENCES notes(id), folder_id INTEGER NOT NULL REFERENCES folders(id))"
+  execute_ c "CREATE INDEX IF NOT EXISTS folder_notes_folder_id ON folder_notes(folder_id)"
 
 -- | Início comum de todos os SELECTs.
 -- A ORDEM das colunas aqui tem que bater com a ordem dos campos de Note,
 -- porque o FromRow lê coluna por coluna, em sequência.
 selectCols :: Query
-selectCols = "SELECT id, title, content, kind, language, created_at, updated_at FROM notes"
+selectCols = "SELECT id, title, content, kind, language, created_at, updated_at, folder_id FROM notes LEFT JOIN folder_notes ON note_id = id"
+
+data Folder = Folder Int Text Int Int
+
+instance FromRow Folder where
+  fromRow = Folder <$> field <*> field <*> field <*> field
+
+instance ToJSON Folder where
+  toJSON (Folder i name texts codes) = object
+    ["id" .= i, "name" .= name, "textCount" .= texts, "codeCount" .= codes]
+
+newtype FolderInput = FolderInput Text
+
+instance FromJSON FolderInput where
+  parseJSON = withObject "FolderInput" $ \o -> FolderInput <$> o .: "name"
+
+newtype FolderMove = FolderMove (Maybe Int)
+
+instance FromJSON FolderMove where
+  parseJSON = withObject "FolderMove" $ \o -> FolderMove <$> o .: "folderId"
+
+listFolders :: Connection -> IO [Folder]
+listFolders c = query_ c
+  "SELECT folders.id, name, COUNT(CASE WHEN kind = 'text' THEN 1 END), COUNT(CASE WHEN kind = 'code' THEN 1 END) FROM folders LEFT JOIN folder_notes ON folder_id = folders.id LEFT JOIN notes ON notes.id = note_id GROUP BY folders.id ORDER BY name"
+
+moveNoteToFolder :: Connection -> Int -> Maybe Int -> IO (Maybe Note)
+moveNoteToFolder c i destination = withTransaction c $ do
+  case destination of
+    Nothing -> execute c "DELETE FROM folder_notes WHERE note_id = ?" (Only i)
+    Just folderId -> execute c
+      "INSERT INTO folder_notes (note_id, folder_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM notes WHERE id = ?) AND EXISTS (SELECT 1 FROM folders WHERE id = ?) ON CONFLICT(note_id) DO UPDATE SET folder_id = excluded.folder_id"
+      (i, folderId, i, folderId)
+  note <- getNote c i
+  pure $ note >>= \n -> if noteFolderId n == destination then Just n else Nothing
 
 -- | Lista as notas, das editadas mais recentemente para as mais antigas.
 --
@@ -428,13 +468,16 @@ getNote c i = do
 -- | Insere uma nota nova e devolve a nota como ficou gravada no banco
 -- (já com o id e as datas gerados).
 createNote :: Connection -> NoteInput -> IO (Maybe Note)
-createNote c n = do
+createNote c n = withTransaction c $ do
   now <- getCurrentTime        -- "<-" executa a ação IO e guarda o resultado
   execute c
-    "INSERT INTO notes (title, content, kind, language, created_at, updated_at) VALUES (?,?,?,?,?,?)"
-    (inTitle n, inContent n, inKind n, inLanguage n, now, now)
-  i <- lastInsertRowId c       -- id que o AUTOINCREMENT acabou de gerar
-  getNote c (fromIntegral i)   -- relê a nota; fromIntegral converte Int64 -> Int
+    "INSERT INTO notes (title, content, kind, language, created_at, updated_at) SELECT ?,?,?,?,?,? WHERE ? IS NULL OR EXISTS (SELECT 1 FROM folders WHERE id = ?)"
+    (inTitle n, inContent n, inKind n, inLanguage n, now, now, inFolderId n, inFolderId n)
+  inserted <- changes c
+  if inserted == 0 then pure Nothing else do
+    i <- fromIntegral <$> lastInsertRowId c
+    mapM_ (\folderId -> execute c "INSERT INTO folder_notes (note_id, folder_id) VALUES (?,?)" (i :: Int, folderId)) (inFolderId n)
+    getNote c i
 
 -- | Atualiza uma nota existente. Devolve Nothing se o id não existir.
 -- O created_at não muda; só o updated_at recebe a hora atual.
@@ -451,7 +494,8 @@ updateNote c i n = do
 
 -- | Apaga uma nota. Devolve True se apagou, False se o id não existia.
 deleteNote :: Connection -> Int -> IO Bool
-deleteNote c i = do
+deleteNote c i = withTransaction c $ do
+  execute c "DELETE FROM folder_notes WHERE note_id = ?" (Only i)
   execute c "DELETE FROM notes WHERE id = ?" (Only i)
   -- (> 0) é uma função "maior que zero" e <$> a aplica ao resultado de
   -- "changes c" sem precisar de uma variável intermediária.
@@ -598,6 +642,33 @@ main = do
       q <- queryParamMaybe "q"
       json =<< db (`listNotes` q)
 
+    get "/api/folders" $ json =<< db listFolders
+
+    post "/api/folders" $ do
+      FolderInput rawName <- jsonData
+      let name = T.strip rawName
+      if T.null name || T.length name > 80
+        then status status400 >> jsonError "Informe um nome de pasta com até 80 caracteres."
+        else do
+          folder <- db $ \c -> do
+            execute c "INSERT INTO folders (name) VALUES (?) ON CONFLICT DO NOTHING" (Only name)
+            inserted <- changes c
+            if inserted > 0
+              then do
+                i <- fromIntegral <$> lastInsertRowId c
+                pure (Just (Folder i name 0 0))
+              else pure Nothing
+          maybe (status status409 >> jsonError "Já existe uma pasta com esse nome.")
+            (\created -> status status201 >> json created) folder
+
+    get "/api/folders/:id/notes" $ withId $ \i ->
+      json =<< db (\c -> query c (selectCols <> " WHERE folder_id = ? ORDER BY updated_at DESC") (Only i) :: IO [Note])
+
+    put "/api/notes/:id/folder" $ withId $ \i -> do
+      FolderMove destination <- jsonData
+      db (\c -> moveNoteToFolder c i destination) >>=
+        maybe (status status404 >> jsonError "Nota ou pasta não encontrada.") json
+
     -- GET /api/notes/:id  → uma nota (200) ou 404
     -- ">>=" encadeia: executa a busca e passa o resultado (Maybe Note) para
     -- "maybe notFound404 json": se for Nothing responde 404, se for
@@ -607,7 +678,7 @@ main = do
 
     -- POST /api/notes  → cria a nota e responde 201 Created com ela.
     post "/api/notes" $ withInput $ \n ->
-      db (`createNote` n) >>= maybe notFound404 (\note -> status status201 >> json note)
+      db (`createNote` n) >>= maybe (status status404 >> jsonError "Pasta não encontrada.") (\note -> status status201 >> json note)
 
     -- PUT /api/notes/:id  → atualiza: valida o id, depois o corpo.
     -- Responde 200 com a nota atualizada, ou 404 se o id não existir.

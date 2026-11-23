@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-  <link rel="stylesheet" href="/style.css?v=guest-avatar">
+  <link rel="stylesheet" href="/style.css?v=folders">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -50,6 +50,11 @@
           <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
         </button>
       </div>
+
+      <button type="button" class="btn btn-secondary folders-button" id="show-folders" aria-controls="folders-view">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+        Pastas
+      </button>
 
       <label class="search">
         <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
@@ -116,6 +121,9 @@
             </button>
           </div>
           <span class="divider"></span>
+          <button type="button" class="icon-btn" id="move-note" title="Mover para pasta" aria-label="Mover para pasta">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M8 13h7m-2-2 2 2-2 2"/></svg>
+          </button>
           <button class="icon-btn" id="copy-all" title="Copiar conteúdo" aria-label="Copiar conteúdo">
             <svg viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
           </button>
@@ -126,6 +134,25 @@
       </header>
 
       <main class="page">
+        <section id="folders-view" class="folders-view" aria-labelledby="folders-title" hidden>
+          <button type="button" class="btn btn-secondary" id="folder-back" hidden>← Todas as pastas</button>
+          <header class="folders-heading">
+            <h1 id="folders-title" tabindex="-1">Pastas</h1>
+            <button type="button" class="btn btn-primary" id="show-folder-form">Nova pasta</button>
+            <div class="folder-actions" id="folder-actions" hidden>
+              <button type="button" class="btn btn-primary" id="folder-new-note">Nova nota</button>
+              <button type="button" class="btn btn-secondary" id="folder-new-code">Novo código</button>
+            </div>
+          </header>
+          <form id="folder-form" class="folder-form" hidden>
+            <label for="folder-name">Nome da pasta</label>
+            <input id="folder-name" name="name" maxlength="80" required>
+            <button type="submit" class="btn btn-primary">Criar pasta</button>
+            <p id="folder-error" role="alert" hidden></p>
+          </form>
+          <p id="folders-empty" class="folders-empty" hidden></p>
+          <div id="folders-grid" class="folders-grid"></div>
+        </section>
         <!-- Nenhuma nota aberta -->
         <section id="empty" class="empty">
           <div class="empty-icon">
@@ -234,6 +261,18 @@
       </div>
     </form>
   </dialog>
-  <script src="/app.js?v=random-avatar"></script>
+  <dialog id="move-note-dialog" class="registration" aria-labelledby="move-note-title">
+    <form id="move-note-form">
+      <h2 id="move-note-title">Mover para pasta</h2>
+      <label for="move-note-folder">Pasta</label>
+      <select id="move-note-folder" name="folderId"></select>
+      <p id="move-note-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="move-note-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+  <script src="/app.js?v=folders"></script>
 </body>
 </html>

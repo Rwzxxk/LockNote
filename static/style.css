@@ -245,6 +245,41 @@ kbd {
 
 .new-group { display: flex; gap: 8px; }
 .new-group .btn-primary { flex: 1; }
+.folders-button { justify-content: flex-start; }
+.folders-view { width: min(100%, 900px); margin: 0 auto; overflow-y: auto; padding: 2px; }
+.folders-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.folder-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.folders-heading h1 { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+#folder-back { margin-bottom: 12px; }
+.folders-empty { color: var(--fg-2); }
+.folders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr)); gap: 12px; }
+.folder-card {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  text-align: left;
+}
+.folder-card:hover { border-color: var(--accent); }
+.folder-card strong { overflow-wrap: anywhere; }
+.folder-card small { color: var(--fg-2); overflow-wrap: anywhere; }
+.folder-card > svg { color: var(--accent-text); width: 22px; height: 22px; }
+.folder-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
+.folder-form input, #move-note-folder {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+}
+.folder-form input { flex: 1 1 160px; }
+.folder-form p { flex-basis: 100%; margin: 0; color: var(--danger); }
 
 .search {
   display: flex;
