@@ -21,7 +21,11 @@ executable notas
     --   -threaded  usa o runtime multithread, para atender várias
     --              requisições HTTP ao mesmo tempo
     --   -rtsopts   permite ajustar o runtime pela linha de comando
+    --   --disable-high-entropy-va (só no Windows): sem isso o executável
+    --              quebra ao iniciar (segmentation fault) no GHC 9.10
     ghc-options:      -Wall -threaded -rtsopts
+    if os(windows)
+        ghc-options:  -optl-Wl,--disable-high-entropy-va
 
     -- Bibliotecas usadas (com versão mínima):
     build-depends:
@@ -37,6 +41,8 @@ executable notas
         http-types            >=0.12,
         -- framework web (rotas, JSON, servidor Warp)
         scotty                >=0.22,
+        -- servidor HTTP usado pelo Scotty (para escutar só em 127.0.0.1)
+        warp                  >=3.3,
         -- banco SQLite (o SQLite vem embutido)
         sqlite-simple         >=0.4.19,
         -- serve os arquivos do front-end (pasta static/)

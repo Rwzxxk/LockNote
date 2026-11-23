@@ -63,9 +63,11 @@ import Data.Time (UTCTime, getCurrentTime)
 import Database.SQLite.Simple                -- Connection, query, execute ...
 import Network.HTTP.Types.Status (status201, status204, status400, status404, status409)
 import Network.Wai.Middleware.Static (addBase, noDots, staticPolicy, (>->))
+import Network.Wai.Handler.Warp (setHost, setPort) -- endereço e porta do servidor HTTP
 import System.Environment (lookupEnv) -- lê variáveis de ambiente (PORT, NOTES_DB)
 import Text.Read (readMaybe)          -- converte texto em número sem quebrar se for inválido
 import Web.Scotty                     -- o framework web: get, post, json, status ...
+import qualified Web.Scotty as Scotty -- Scotty.defaultOptions (o Aeson tem um com o mesmo nome)
 
 -- ============================================================================
 --  MODELO
@@ -406,7 +408,7 @@ main = do
   --   lookupEnv "PORT"      -> Maybe String   (a variável pode não existir)
   --   (>>= readMaybe)       -> Maybe Int      (Nothing se não existir OU não for número)
   --   fromMaybe 3000        -> Int            (usa 3000 se deu Nothing)
-  port   <- fromMaybe 3000 . (>>= readMaybe) <$> lookupEnv "PORT"
+  port   <- fromMaybe (3000 :: Int) . (>>= readMaybe) <$> lookupEnv "PORT"
   dbPath <- fromMaybe "notes.db" <$> lookupEnv "NOTES_DB"
 
   -- Cria o arquivo do banco e a tabela, se ainda não existirem.
@@ -429,13 +431,20 @@ main = do
   let db :: (Connection -> IO a) -> ActionM a
       db f = liftIO (withConnection dbPath f)
 
-  putStrLn $ "LockNote rodando em http://localhost:" ++ show port
+  putStrLn $ "LockNote rodando em http://127.0.0.1:" ++ show port ++ " (apenas neste computador)"
   putStrLn $ "Banco de dados: " ++ dbPath
+
+  -- Segurança: o servidor só aceita conexões do próprio computador
+  -- (127.0.0.1). Como não há login, escutar em todas as interfaces deixaria
+  -- qualquer pessoa na mesma rede (Wi-Fi, rede da empresa) ler e apagar as
+  -- notas. O padrão do Scotty/Warp seria escutar em todas.
+  let serverOptions = Scotty.defaultOptions
+        { settings = setHost "127.0.0.1" (setPort port (settings Scotty.defaultOptions)) }
 
   -- A partir daqui, o Scotty sobe o servidor e fica atendendo para sempre.
   -- Dentro do bloco "do" declaramos o middleware e as rotas. A ordem
   -- importa: a primeira rota que casar com a requisição é a que responde.
-  scotty port $ do
+  scottyOpts serverOptions $ do
 
     -- Middleware = código que roda ANTES das rotas, em toda requisição.
     -- Este serve arquivos estáticos: um pedido como GET /style.css é

@@ -15,6 +15,8 @@ cabal run notas
 
 Abra http://localhost:3000. Rode a partir desta pasta (o servidor lê `static/`).
 
+O servidor só aceita conexões **deste computador** (127.0.0.1): outras máquinas da rede não conseguem acessar as notas.
+
 Variáveis opcionais: `PORT` (padrão `3000`) e `NOTES_DB` (padrão `notes.db`).
 
 ### Problemas comuns no Windows
