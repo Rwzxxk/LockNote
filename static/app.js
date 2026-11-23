@@ -8,6 +8,7 @@ const ICONS = {
   code: '<svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
   clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
   folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 4v6m4-6v6"/></svg>',
   calendar: '<svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg>',
 };
 
@@ -40,6 +41,7 @@ const api = {
   folders: () => request('GET', '/api/folders'),
   createFolder: (name, color) => request('POST', '/api/folders', { name, color }),
   updateFolder: (id, name, color) => request('PUT', `/api/folders/${id}`, { name, color }),
+  removeFolder: (id) => request('DELETE', `/api/folders/${id}`),
   folderNotes: (id) => request('GET', `/api/folders/${id}/notes`),
   moveNote: (id, folderId) => request('PUT', `/api/notes/${id}/folder`, { folderId }),
   pinNote: (id, pinned) => request('PUT', `/api/notes/${id}/pin`, { pinned }),
@@ -426,11 +428,10 @@ const folderError = $('#folder-error');
 const folderBack = $('#folder-back');
 const folderTitle = $('#folders-title');
 
-function addFolderCard(icon, title, subtitle, onClick, color) {
+function addFolderCard(icon, title, subtitle, onClick, folder) {
   const card = document.createElement('button');
   card.type = 'button';
   card.className = 'folder-card';
-  if (color) card.dataset.color = color;
   card.innerHTML = icon;
   const label = document.createElement('strong');
   const details = document.createElement('small');
@@ -438,7 +439,23 @@ function addFolderCard(icon, title, subtitle, onClick, color) {
   details.textContent = subtitle;
   card.append(label, details);
   card.addEventListener('click', onClick);
-  folderGrid.append(card);
+  if (!folder) {
+    folderGrid.append(card);
+    return;
+  }
+  card.dataset.color = folder.color || 'default';
+  const item = document.createElement('div');
+  item.className = 'folder-grid-item';
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'icon-btn danger-action folder-grid-remove';
+  remove.title = 'Remover pasta';
+  remove.setAttribute('aria-label', `Remover pasta ${folder.name}`);
+  remove.setAttribute('aria-haspopup', 'dialog');
+  remove.innerHTML = ICONS.trash;
+  remove.addEventListener('click', () => openRemoveFolderDialog(folder));
+  item.append(card, remove);
+  folderGrid.append(item);
 }
 
 async function openFolders(folder = null) {
@@ -472,7 +489,7 @@ async function openFolders(folder = null) {
       } else {
         const texts = `${item.textCount} ${item.textCount === 1 ? 'nota' : 'notas'}`;
         const codes = `${item.codeCount} ${item.codeCount === 1 ? 'código' : 'códigos'}`;
-        addFolderCard(ICONS.folder, item.name, `${texts} · ${codes}`, () => openFolders(item), item.color || 'default');
+        addFolderCard(ICONS.folder, item.name, `${texts} · ${codes}`, () => openFolders(item), item);
       }
     }
     renderList();
@@ -525,6 +542,47 @@ folderForm.addEventListener('submit', async (event) => {
     }
   } finally {
     folderSubmit.disabled = false;
+  }
+});
+
+const removeFolderDialog = $('#remove-folder-dialog');
+const removeFolderForm = $('#remove-folder-form');
+const removeFolderName = $('#remove-folder-name');
+const removeFolderError = $('#remove-folder-error');
+const removeFolderCancel = $('#remove-folder-cancel');
+const removeFolderSubmit = removeFolderForm.querySelector('[type="submit"]');
+let folderToRemove = null;
+
+function openRemoveFolderDialog(folder) {
+  folderToRemove = folder;
+  removeFolderName.textContent = folder.name;
+  removeFolderError.hidden = true;
+  removeFolderDialog.showModal();
+}
+removeFolderCancel.addEventListener('click', () => removeFolderDialog.close());
+removeFolderDialog.addEventListener('cancel', (event) => {
+  if (removeFolderSubmit.disabled) event.preventDefault();
+});
+removeFolderForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const folder = folderToRemove;
+  if (!folder || removeFolderSubmit.disabled) return;
+  removeFolderSubmit.disabled = removeFolderCancel.disabled = true;
+  removeFolderError.hidden = true;
+  try {
+    await api.removeFolder(folder.id);
+    for (const note of state.notes) {
+      if (note.folderId === folder.id) note.folderId = null;
+    }
+    folderToRemove = null;
+    removeFolderDialog.close();
+    toast('Pasta excluída');
+    await openFolders();
+  } catch (error) {
+    removeFolderError.textContent = error.message;
+    removeFolderError.hidden = false;
+  } finally {
+    removeFolderSubmit.disabled = removeFolderCancel.disabled = false;
   }
 });
 
@@ -694,27 +752,69 @@ async function copyContent() {
   toast('Copiado para a área de transferência');
 }
 
-async function deleteCurrent() {
-  const c = state.current;
-  if (!c || !confirm(`Excluir “${c.title || 'Sem título'}”? Isso não pode ser desfeito.`)) return;
-  clearTimeout(state.saveTimer);
-  state.dirty = false;
+const deleteNoteDialog = $('#delete-note-dialog');
+const deleteNoteForm = $('#delete-note-form');
+const deleteNoteTitle = $('#delete-note-title');
+const deleteNoteName = $('#delete-note-name');
+const deleteNoteError = $('#delete-note-error');
+const deleteNoteCancel = $('#delete-note-cancel');
+const deleteNoteSubmit = deleteNoteForm.querySelector('[type="submit"]');
+let noteToDelete = null;
+
+function openDeleteNoteDialog() {
+  const note = state.current;
+  if (!note) return;
+  noteToDelete = note;
+  const isCode = note.kind === 'code';
+  deleteNoteTitle.textContent = isCode ? 'Excluir código?' : 'Excluir nota?';
+  deleteNoteName.textContent = `“${note.title || 'Sem título'}”`;
+  deleteNoteSubmit.textContent = isCode ? 'Excluir código' : 'Excluir nota';
+  deleteNoteError.hidden = true;
+  deleteNoteDialog.showModal();
+}
+
+deleteNoteCancel.addEventListener('click', () => deleteNoteDialog.close());
+deleteNoteDialog.addEventListener('cancel', (event) => {
+  if (deleteNoteSubmit.disabled) event.preventDefault();
+});
+deleteNoteForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const note = noteToDelete;
+  if (!note || deleteNoteSubmit.disabled) return;
+  deleteNoteSubmit.disabled = deleteNoteCancel.disabled = true;
+  deleteNoteError.hidden = true;
+  const isCode = note.kind === 'code';
   try {
-    await api.remove(c.id);
-  } catch (e) {
-    toast('Não foi possível excluir a nota');
+    if (state.current === note) {
+      await state.saveInFlight;
+      if (state.current === note) clearTimeout(state.saveTimer);
+    }
+    await api.remove(note.id);
+  } catch {
+    if (state.current === note && state.dirty) scheduleSave();
+    deleteNoteError.textContent = isCode ? 'Não foi possível excluir o código.' : 'Não foi possível excluir a nota.';
+    deleteNoteError.hidden = false;
+    return;
+  } finally {
+    deleteNoteSubmit.disabled = deleteNoteCancel.disabled = false;
+  }
+  state.notes = state.notes.filter((n) => n.id !== note.id);
+  noteToDelete = null;
+  deleteNoteDialog.close();
+  toast(isCode ? 'Código excluído' : 'Nota excluída');
+  if (state.current !== note) {
+    renderList();
     return;
   }
-  state.notes = state.notes.filter((n) => n.id !== c.id);
+  state.dirty = false;
   state.current = null;
-  toast('Nota excluída');
   if (state.notes.length) {
     openNote(state.notes[0].id);
   } else {
     showEditor(false);
     renderList();
   }
-}
+});
 
 function setFilter(f) {
   state.filter = f;
@@ -976,7 +1076,7 @@ el.pinNote.addEventListener('click', async () => {
   }
 });
 $('#copy-code').addEventListener('click', copyContent);
-$('#delete').addEventListener('click', deleteCurrent);
+$('#delete').addEventListener('click', openDeleteNoteDialog);
 $$('.tab').forEach((t) => t.addEventListener('click', () => setFilter(t.dataset.filter)));
 
 el.title.addEventListener('input', () => {
@@ -1041,7 +1141,8 @@ el.search.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (registration.open || login.open || editAccount.open || moveNoteDialog.open) return;
+  if (registration.open || login.open || editAccount.open || moveNoteDialog.open
+    || removeFolderDialog.open || deleteNoteDialog.open) return;
   if (e.key === 'Escape' && accountControl.open) {
     accountControl.open = false;
     accountToggle.focus();

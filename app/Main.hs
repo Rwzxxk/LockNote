@@ -707,6 +707,15 @@ main = do
     get "/api/folders/:id/notes" $ withId $ \i ->
       json =<< db (\c -> query c (selectCols <> " WHERE folder_id = ?" <> noteOrder) (Only i) :: IO [Note])
 
+    delete "/api/folders/:id" $ withId $ \i -> do
+      removed <- db $ \c -> withTransaction c $ do
+        execute c "DELETE FROM folder_notes WHERE folder_id = ?" (Only i)
+        execute c "DELETE FROM folders WHERE id = ?" (Only i)
+        (> 0) <$> changes c
+      if removed
+        then status status204
+        else status status404 >> jsonError "Pasta não encontrada."
+
     put "/api/notes/:id/pin" $ withId $ \i -> do
       NotePin pinned <- jsonData
       db (\c -> setNotePin c i pinned) >>= maybe notFound404 json

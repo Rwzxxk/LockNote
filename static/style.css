@@ -249,10 +249,19 @@ kbd {
 .folders-view { width: min(100%, 900px); margin: 0 auto; overflow-y: auto; padding: 2px; }
 .folders-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
 .folder-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.danger-action:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+}
+#remove-folder-name, #delete-note-name { overflow-wrap: anywhere; }
 .folders-heading h1 { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
 #folder-back { margin-bottom: 12px; }
 .folders-empty { color: var(--fg-2); }
 .folders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr)); gap: 12px; }
+.folder-grid-item { position: relative; display: grid; min-width: 0; }
+.folder-grid-item .folder-card { padding-right: 48px; }
+.folder-grid-remove { position: absolute; top: 8px; right: 8px; }
 .folder-card {
   display: grid;
   align-content: start;

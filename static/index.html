@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-  <link rel="stylesheet" href="/style.css?v=note-pins">
+  <link rel="stylesheet" href="/style.css?v=delete-note-dialog">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -294,6 +294,32 @@
       </div>
     </form>
   </dialog>
-  <script src="/app.js?v=note-pins"></script>
+  <dialog id="remove-folder-dialog" class="registration" aria-labelledby="remove-folder-title" aria-describedby="remove-folder-description">
+    <form id="remove-folder-form">
+      <h2 id="remove-folder-title">Excluir pasta?</h2>
+      <div id="remove-folder-description">
+        A pasta <strong id="remove-folder-name"></strong> será excluída. As notas e os códigos ficam em <strong>Sem pasta</strong>.
+      </div>
+      <p id="remove-folder-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="remove-folder-cancel" autofocus>Cancelar</button>
+        <button type="submit" class="btn btn-secondary danger-action">Excluir pasta</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="delete-note-dialog" class="registration" aria-labelledby="delete-note-title" aria-describedby="delete-note-description">
+    <form id="delete-note-form">
+      <h2 id="delete-note-title">Excluir nota?</h2>
+      <div id="delete-note-description">
+        A exclusão de <strong id="delete-note-name"></strong> é permanente.
+      </div>
+      <p id="delete-note-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="delete-note-cancel" autofocus>Cancelar</button>
+        <button type="submit" class="btn btn-secondary danger-action">Excluir nota</button>
+      </div>
+    </form>
+  </dialog>
+  <script src="/app.js?v=delete-note-dialog"></script>
 </body>
 </html>
