@@ -57,6 +57,7 @@ import Data.Aeson                     -- JSON: ToJSON, FromJSON, object, (.=) ..
 import Crypto.KDF.PBKDF2 (Parameters(..), fastPBKDF2_SHA256)
 import Crypto.Random (getRandomBytes)
 import qualified Data.ByteString as BS
+import Data.Char (isAsciiLower, isDigit)
 import Data.Maybe (fromMaybe)         -- fromMaybe padrao x: usa o padrão quando x é Nothing
 import Data.Text (Text)               -- tipo de texto eficiente (Unicode)
 import qualified Data.Text as T       -- funções sobre Text (strip, null ...)
@@ -160,6 +161,8 @@ instance FromJSON NoteInput where
 -- antes para devolver uma mensagem de erro amigável em vez de um erro SQL.)
 validKind :: Text -> Bool
 validKind k = k `elem` ["text", "code"]
+-- `elem` entre crases é a função elem usada como operador:
+-- "k é elemento da lista [...]?"
 
 data Registration = Registration Text Text Text Text Text
 
@@ -170,33 +173,57 @@ instance FromJSON Registration where
 
 registerAccount :: FilePath -> Registration -> ActionM ()
 registerAccount dbPath (Registration rawEmail confirmation rawUsername password passwordConfirmation)
-  | not validEmail = invalid "Informe um e-mail válido."
+  | not (validRegistrationEmail email) = invalid "Informe um e-mail válido, como nome@exemplo.com."
   | email /= T.toLower (T.strip confirmation) = invalid "Os e-mails precisam coincidir."
   | T.length username < 3 || T.length username > 50 = invalid "O nome de usuário deve ter entre 3 e 50 caracteres."
   | T.length password < 12 || T.length password > 128 = invalid "A senha deve ter entre 12 e 128 caracteres."
   | password /= passwordConfirmation = invalid "As senhas precisam coincidir."
   | otherwise = do
-      created <- liftIO $ do
+      conflict <- liftIO $ do
         salt <- getRandomBytes 16 :: IO BS.ByteString
         let iterations = 600000
             passwordHash = fastPBKDF2_SHA256 (Parameters iterations 32) (TE.encodeUtf8 password) salt :: BS.ByteString
-        withConnection dbPath $ \c -> do
+        withConnection dbPath $ \c -> withTransaction c $ do
           execute c
             "INSERT INTO accounts (email, username, password_salt, password_hash, password_iterations) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING"
             (email, username, salt, passwordHash, iterations)
-          (> 0) <$> changes c
-      if created
-        then status status201 >> json (object ["username" .= username])
-        else status status409 >> jsonError "E-mail ou nome de usuário já cadastrado."
+          inserted <- changes c
+          if inserted > 0
+            then pure Nothing
+            else do
+              matches <- query c
+                "SELECT EXISTS(SELECT 1 FROM accounts WHERE email = ?), EXISTS(SELECT 1 FROM accounts WHERE username = ?)"
+                (email, username) :: IO [(Int, Int)]
+              pure $ Just $ case matches of
+                [(1, 1)] -> "Este e-mail e este nome de usuário já estão cadastrados."
+                [(1, 0)] -> "Este e-mail já está cadastrado."
+                [(0, 1)] -> "Este nome de usuário já está cadastrado."
+                _ -> "Já existe uma conta com esses dados."
+      case conflict of
+        Nothing -> status status201 >> json (object ["username" .= username])
+        Just message -> status status409 >> jsonError message
   where
     email = T.toLower (T.strip rawEmail)
     username = T.strip rawUsername
-    validEmail = T.length email <= 254 && case T.splitOn "@" email of
-      [local, domain] -> not (T.null local || T.null domain || T.any (<= ' ') email)
-      _ -> False
     invalid message = status status400 >> jsonError message
--- `elem` entre crases é a função elem usada como operador:
--- "k é elemento da lista [...]?"
+
+validRegistrationEmail :: Text -> Bool
+validRegistrationEmail email = T.length email <= 254 && case T.splitOn "@" email of
+  [local, domain] ->
+    T.length local <= 64
+      && all (\part -> not (T.null part) && T.all localChar part) (T.splitOn "." local)
+      && case T.splitOn "." domain of
+        labels@(_ : _ : _) -> all validLabel labels
+        _ -> False
+  _ -> False
+  where
+    letterOrDigit ch = isAsciiLower ch || isDigit ch
+    localChar ch = letterOrDigit ch || ch `elem` ("!#$%&'*+-/=?^_`{|}~" :: String)
+    validLabel label = not (T.null label)
+      && T.length label <= 63
+      && letterOrDigit (T.head label)
+      && letterOrDigit (T.last label)
+      && T.all (\ch -> letterOrDigit ch || ch == '-') label
 
 -- ============================================================================
 --  BANCO DE DADOS
