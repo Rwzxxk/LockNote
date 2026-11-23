@@ -492,26 +492,37 @@ folderForm.addEventListener('submit', async (event) => {
 });
 
 const moveNoteDialog = $('#move-note-dialog');
+const moveNoteTitle = $('#move-note-title');
 const moveNoteForm = $('#move-note-form');
 const moveNoteSelect = $('#move-note-folder');
+const moveNoteNewFolder = $('#move-note-new-folder');
+const moveNoteFolderName = $('#move-note-folder-name');
 const moveNoteError = $('#move-note-error');
 const moveNoteButton = $('#move-note');
 const moveNoteCancel = $('#move-note-cancel');
 const moveNoteSubmit = moveNoteForm.querySelector('[type="submit"]');
+
+function syncMoveNoteFolder() {
+  const creating = moveNoteSelect.value === 'new';
+  moveNoteNewFolder.hidden = !creating;
+  moveNoteFolderName.disabled = !creating || moveNoteSubmit.disabled;
+  moveNoteFolderName.required = creating;
+}
 
 moveNoteButton.addEventListener('click', async () => {
   const note = state.current;
   moveNoteButton.disabled = true;
   try {
     const folders = await api.folders();
-    if (state.current !== note) return;
-    if (!folders.length) {
-      toast('Crie uma pasta antes de mover a nota');
-      return;
-    }
+    if (!note || state.current !== note) return;
+    moveNoteTitle.textContent = note.kind === 'code' ? 'Mover código para pasta' : 'Mover nota para pasta';
     moveNoteSelect.replaceChildren(new Option('Sem pasta', ''));
     for (const folder of folders) moveNoteSelect.add(new Option(folder.name, folder.id));
-    moveNoteSelect.value = note.folderId ?? '';
+    moveNoteSelect.add(new Option('Criar nova pasta', 'new'));
+    moveNoteSelect.value = folders.length ? (note.folderId ?? '') : 'new';
+    if (moveNoteSelect.selectedIndex === -1) moveNoteSelect.value = '';
+    moveNoteFolderName.value = '';
+    syncMoveNoteFolder();
     moveNoteError.hidden = true;
     moveNoteDialog.showModal();
   } catch {
@@ -519,6 +530,11 @@ moveNoteButton.addEventListener('click', async () => {
   } finally {
     moveNoteButton.disabled = false;
   }
+});
+moveNoteSelect.addEventListener('change', () => {
+  moveNoteError.hidden = true;
+  syncMoveNoteFolder();
+  if (!moveNoteNewFolder.hidden) moveNoteFolderName.focus();
 });
 moveNoteCancel.addEventListener('click', () => moveNoteDialog.close());
 moveNoteDialog.addEventListener('cancel', (event) => {
@@ -529,21 +545,41 @@ moveNoteForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const note = state.current;
   if (moveNoteSubmit.disabled || !note) return;
-  moveNoteSubmit.disabled = moveNoteCancel.disabled = true;
+  const isCode = note.kind === 'code';
+  const creating = moveNoteSelect.value === 'new';
+  const name = moveNoteFolderName.value.trim();
+  moveNoteSubmit.disabled = moveNoteCancel.disabled = moveNoteSelect.disabled = true;
+  syncMoveNoteFolder();
   moveNoteError.hidden = true;
+  let createdFolder;
   try {
+    if (!await flushSave()) {
+      throw new Error(isCode
+        ? 'O código ainda não foi salvo. Tente novamente.'
+        : 'A nota ainda não foi salva. Tente novamente.');
+    }
+    if (creating) {
+      if (!name) throw new Error('Informe o nome da pasta.');
+      createdFolder = await api.createFolder(name);
+      moveNoteSelect.add(new Option(createdFolder.name, createdFolder.id), moveNoteSelect.options.length - 1);
+      moveNoteSelect.value = createdFolder.id;
+      syncMoveNoteFolder();
+    }
     const destination = moveNoteSelect.value ? Number(moveNoteSelect.value) : null;
     const moved = await api.moveNote(note.id, destination);
     note.folderId = moved.folderId;
     const cachedNote = state.notes.find((item) => item.id === note.id);
     if (cachedNote) cachedNote.folderId = moved.folderId;
     moveNoteDialog.close();
-    toast('Pasta da nota atualizada');
+    toast(isCode ? 'Pasta do código atualizada' : 'Pasta da nota atualizada');
   } catch (error) {
-    moveNoteError.textContent = error.message;
+    moveNoteError.textContent = createdFolder
+      ? `A pasta foi criada. Tente salvar novamente para mover ${isCode ? 'o código' : 'a nota'}.`
+      : error.message;
     moveNoteError.hidden = false;
   } finally {
-    moveNoteSubmit.disabled = moveNoteCancel.disabled = false;
+    moveNoteSubmit.disabled = moveNoteCancel.disabled = moveNoteSelect.disabled = false;
+    syncMoveNoteFolder();
   }
 });
 
