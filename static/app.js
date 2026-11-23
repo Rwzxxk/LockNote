@@ -42,6 +42,7 @@ const state = {
   filter: 'all',
   query: '',
   saveTimer: null,
+  saveInFlight: null,
   dirty: false,
   lineCount: 0,
 };
@@ -359,7 +360,7 @@ function showEditor(show) {
 }
 
 async function openNote(id) {
-  await flushSave();
+  if (!await flushSave()) return;
   const n = state.notes.find((x) => x.id === id);
   if (!n) return;
   state.current = { ...n };
@@ -374,13 +375,13 @@ async function openNote(id) {
 }
 
 async function newNote(kind) {
-  await flushSave();
+  if (!await flushSave()) return;
   try {
     const n = await api.create({ title: '', content: '', kind, language: '' });
     state.notes.unshift(n);
     if (state.filter !== 'all' && state.filter !== kind) setFilter('all');
     await openNote(n.id);
-    el.title.focus();
+    if (state.current?.id === n.id) el.title.focus();
   } catch (e) {
     toast('Não foi possível criar a nota');
   }
@@ -402,32 +403,49 @@ function scheduleSave() {
 
 async function save() {
   clearTimeout(state.saveTimer);
-  if (!state.current || !state.dirty) return;
+  if (state.saveInFlight) return state.saveInFlight;
+  if (!state.current || !state.dirty) return true;
   state.dirty = false;
-  const c = state.current;
+  const note = state.current;
   setSaveState('saving');
+  state.saveInFlight = persistNote(note);
+  try {
+    return await state.saveInFlight;
+  } finally {
+    state.saveInFlight = null;
+    if (state.dirty && el.saveState.dataset.state !== 'error') scheduleSave();
+  }
+}
+
+async function persistNote(c) {
   try {
     const saved = await api.update(c.id, {
       title: c.title, content: c.content, kind: c.kind, language: c.language,
     });
     state.notes = [saved, ...state.notes.filter((n) => n.id !== saved.id)];
-    if (state.current && state.current.id === saved.id) {
+    if (state.current === c) {
       state.current.updatedAt = saved.updatedAt;
-      setSaveState('saved');
+      if (!state.dirty) setSaveState('saved');
       renderMeta();
     }
     renderList();
+    return true;
   } catch (e) {
-    if (state.current && state.current.id === c.id) {
+    if (state.current === c) {
+      clearTimeout(state.saveTimer);
       state.dirty = true;
       setSaveState('error');
       state.saveTimer = setTimeout(save, 3000);
     }
+    return false;
   }
 }
 
 async function flushSave() {
-  if (state.dirty) await save();
+  while (state.dirty || state.saveInFlight) {
+    if (!await save()) return false;
+  }
+  return true;
 }
 
 // ---------- Ações ----------
@@ -538,7 +556,7 @@ let searchTimer;
 el.search.addEventListener('input', () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(async () => {
-    await flushSave();
+    if (!await flushSave()) return;
     state.query = el.search.value.trim();
     loadNotes();
   }, 250);
@@ -566,7 +584,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('beforeunload', (e) => {
-  if (state.dirty) {
+  if (state.dirty || state.saveInFlight) {
     save();
     e.preventDefault();
   }
