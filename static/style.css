@@ -217,6 +217,30 @@ kbd {
   font-weight: 600;
 }
 .account-panel button:hover { background: var(--hover); }
+.registration {
+  width: min(420px, calc(100% - 24px));
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: var(--shadow-lg);
+}
+.registration::backdrop { background: rgba(10, 10, 20, .5); }
+.registration form, .registration label { display: grid; gap: 6px; }
+.registration form { gap: 12px; }
+.registration h2, .registration p { margin: 0; }
+.registration input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.registration small { color: var(--fg-2); }
+.registration p { color: var(--danger); }
+.registration-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .logo-name { font-weight: 700; font-size: 16px; letter-spacing: -.02em; }
 
 .new-group { display: flex; gap: 8px; }

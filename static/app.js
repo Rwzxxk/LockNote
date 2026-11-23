@@ -507,7 +507,64 @@ $('#collapse').addEventListener('click', () => toggleSidebar(false));
 $('#open-sidebar').addEventListener('click', () => toggleSidebar(true));
 $('#backdrop').addEventListener('click', closeDrawer);
 $('#guest-login').addEventListener('click', () => toast('Login ainda indisponível'));
-$('#guest-register').addEventListener('click', () => toast('Cadastro ainda indisponível'));
+const registration = $('#registration');
+const registrationForm = $('#registration-form');
+const registrationError = $('#registration-error');
+const registrationSubmit = registrationForm.querySelector('[type="submit"]');
+const registrationCancel = $('#registration-cancel');
+
+function showRegistrationError(message) {
+  registrationError.textContent = message;
+  registrationError.hidden = !message;
+}
+
+$('#guest-register').addEventListener('click', () => {
+  accountControl.open = false;
+  registrationForm.reset();
+  showRegistrationError('');
+  registration.showModal();
+});
+registrationCancel.addEventListener('click', () => registration.close());
+registration.addEventListener('close', () => {
+  registrationForm.reset();
+  accountToggle.focus();
+});
+registration.addEventListener('cancel', (event) => {
+  if (registrationSubmit.disabled) event.preventDefault();
+});
+registrationForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (registrationSubmit.disabled) return;
+  const data = Object.fromEntries(new FormData(registrationForm));
+  if (data.email.trim().toLowerCase() !== data.emailConfirmation.trim().toLowerCase()) {
+    showRegistrationError('Os e-mails precisam coincidir.');
+    return;
+  }
+  if (data.password !== data.passwordConfirmation) {
+    showRegistrationError('As senhas precisam coincidir.');
+    return;
+  }
+  showRegistrationError('');
+  registrationSubmit.disabled = registrationCancel.disabled = true;
+  try {
+    const response = await fetch('/api/accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      showRegistrationError(error?.error || 'Não foi possível criar a conta.');
+      return;
+    }
+    registration.close();
+    toast('Conta criada com sucesso');
+  } catch {
+    showRegistrationError('Não foi possível conectar ao servidor.');
+  } finally {
+    registrationSubmit.disabled = registrationCancel.disabled = false;
+  }
+});
 $('#new-text').addEventListener('click', () => newNote('text'));
 $('#new-code').addEventListener('click', () => newNote('code'));
 $('#empty-text').addEventListener('click', () => newNote('text'));
@@ -579,6 +636,7 @@ el.search.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  if (registration.open) return;
   if (e.key === 'Escape' && accountControl.open) {
     accountControl.open = false;
     accountToggle.focus();

@@ -54,13 +54,17 @@ module Main (main) where
 -- obriga a escrever T.strip, T.null etc., o que evita conflito de nomes.
 
 import Data.Aeson                     -- JSON: ToJSON, FromJSON, object, (.=) ...
+import Crypto.KDF.PBKDF2 (Parameters(..), fastPBKDF2_SHA256)
+import Crypto.Random (getRandomBytes)
+import qualified Data.ByteString as BS
 import Data.Maybe (fromMaybe)         -- fromMaybe padrao x: usa o padrão quando x é Nothing
 import Data.Text (Text)               -- tipo de texto eficiente (Unicode)
 import qualified Data.Text as T       -- funções sobre Text (strip, null ...)
+import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Lazy as TL -- Text "preguiçoso", usado pelo Scotty
 import Data.Time (UTCTime, getCurrentTime)   -- datas e hora atual (UTC)
 import Database.SQLite.Simple                -- Connection, query, execute ...
-import Network.HTTP.Types.Status (status201, status204, status400, status404)
+import Network.HTTP.Types.Status (status201, status204, status400, status404, status409)
 import Network.Wai.Middleware.Static (addBase, noDots, staticPolicy, (>->))
 import System.Environment (lookupEnv) -- lê variáveis de ambiente (PORT, NOTES_DB)
 import Text.Read (readMaybe)          -- converte texto em número sem quebrar se for inválido
@@ -156,6 +160,41 @@ instance FromJSON NoteInput where
 -- antes para devolver uma mensagem de erro amigável em vez de um erro SQL.)
 validKind :: Text -> Bool
 validKind k = k `elem` ["text", "code"]
+
+data Registration = Registration Text Text Text Text Text
+
+instance FromJSON Registration where
+  parseJSON = withObject "Registration" $ \o ->
+    Registration <$> o .: "email" <*> o .: "emailConfirmation"
+      <*> o .: "username" <*> o .: "password" <*> o .: "passwordConfirmation"
+
+registerAccount :: FilePath -> Registration -> ActionM ()
+registerAccount dbPath (Registration rawEmail confirmation rawUsername password passwordConfirmation)
+  | not validEmail = invalid "Informe um e-mail válido."
+  | email /= T.toLower (T.strip confirmation) = invalid "Os e-mails precisam coincidir."
+  | T.length username < 3 || T.length username > 50 = invalid "O nome de usuário deve ter entre 3 e 50 caracteres."
+  | T.length password < 12 || T.length password > 128 = invalid "A senha deve ter entre 12 e 128 caracteres."
+  | password /= passwordConfirmation = invalid "As senhas precisam coincidir."
+  | otherwise = do
+      created <- liftIO $ do
+        salt <- getRandomBytes 16 :: IO BS.ByteString
+        let iterations = 600000
+            passwordHash = fastPBKDF2_SHA256 (Parameters iterations 32) (TE.encodeUtf8 password) salt :: BS.ByteString
+        withConnection dbPath $ \c -> do
+          execute c
+            "INSERT INTO accounts (email, username, password_salt, password_hash, password_iterations) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING"
+            (email, username, salt, passwordHash, iterations)
+          (> 0) <$> changes c
+      if created
+        then status status201 >> json (object ["username" .= username])
+        else status status409 >> jsonError "E-mail ou nome de usuário já cadastrado."
+  where
+    email = T.toLower (T.strip rawEmail)
+    username = T.strip rawUsername
+    validEmail = T.length email <= 254 && case T.splitOn "@" email of
+      [local, domain] -> not (T.null local || T.null domain || T.any (<= ' ') email)
+      _ -> False
+    invalid message = status status400 >> jsonError message
 -- `elem` entre crases é a função elem usada como operador:
 -- "k é elemento da lista [...]?"
 
@@ -180,6 +219,8 @@ initDb c = do
   -- WAL ("write-ahead log") permite que leituras aconteçam ao mesmo tempo
   -- que uma escrita, o que é bom para um servidor com várias requisições.
   execute_ c "PRAGMA journal_mode = WAL"
+  execute_ c
+    "CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, username TEXT NOT NULL COLLATE NOCASE UNIQUE, password_salt BLOB NOT NULL, password_hash BLOB NOT NULL, password_iterations INTEGER NOT NULL)"
 
   -- Cria a tabela só se ela ainda não existir ("IF NOT EXISTS").
   -- As barras invertidas no fim/início das linhas são a forma do Haskell
@@ -367,6 +408,8 @@ main = do
     --   >->          encadeia as duas regras
     -- Se o arquivo não existir, a requisição segue para as rotas abaixo.
     middleware $ staticPolicy (noDots >-> addBase "static")
+
+    post "/api/accounts" $ jsonData >>= registerAccount dbPath
 
     -- Página principal: devolve o index.html do front-end.
     get "/" $ do

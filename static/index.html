@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-  <link rel="stylesheet" href="/style.css?v=account-avatar">
+  <link rel="stylesheet" href="/style.css?v=registration">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -190,6 +190,22 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
-  <script src="/app.js?v=account-panel"></script>
+  <dialog id="registration" class="registration" aria-labelledby="registration-title">
+    <form id="registration-form">
+      <h2 id="registration-title">Criar conta</h2>
+      <label>E-mail <input name="email" type="email" autocomplete="email" maxlength="254" required></label>
+      <label>Confirme o e-mail <input name="emailConfirmation" type="email" maxlength="254" required></label>
+      <label>Nome de usuário <input name="username" autocomplete="username" minlength="3" maxlength="50" required></label>
+      <label>Senha <input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+      <label>Confirme a senha <input name="passwordConfirmation" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+      <small>A senha deve ter pelo menos 12 caracteres.</small>
+      <p id="registration-error" role="alert" hidden></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="registration-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Criar conta</button>
+      </div>
+    </form>
+  </dialog>
+  <script src="/app.js?v=registration"></script>
 </body>
 </html>
