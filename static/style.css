@@ -600,8 +600,9 @@ kbd {
 .pill svg { width: 12px; height: 12px; }
 .meta-item { display: inline-flex; align-items: center; gap: 5px; }
 .meta-item svg { width: 13px; height: 13px; }
-.note-folder-button { height: 28px; gap: 5px; padding: 0 8px; font-size: 12px; }
-.note-folder-button svg { width: 14px; height: 14px; }
+.note-meta-button { height: 28px; gap: 5px; padding: 0 8px; font-size: 12px; }
+.note-meta-button svg { width: 14px; height: 14px; }
+#pin-note[data-pinned="true"] { color: var(--accent-text); background: var(--accent-soft); }
 
 .sheet {
   flex: 1;

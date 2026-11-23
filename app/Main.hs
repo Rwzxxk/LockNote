@@ -100,6 +100,7 @@ data Note = Note
   , noteCreated  :: UTCTime   -- quando foi criada
   , noteUpdated  :: UTCTime   -- última edição (usada para ordenar a lista)
   , noteFolderId :: Maybe Int
+  , notePinned  :: Bool
   }
 
 -- | Como transformar uma LINHA do resultado SQL numa Note.
@@ -112,7 +113,7 @@ data Note = Note
 -- lê a, b e c e passa os três para o construtor Note. Se alguma coluna
 -- tiver o tipo errado, a leitura inteira falha com um erro claro.
 instance FromRow Note where
-  fromRow = Note <$> field <*> field <*> field <*> field <*> field <*> field <*> field <*> field
+  fromRow = Note <$> field <*> field <*> field <*> field <*> field <*> field <*> field <*> field <*> field
 
 -- | Como transformar uma Note em JSON para enviar ao navegador.
 --
@@ -130,6 +131,7 @@ instance ToJSON Note where
     , "createdAt" .= noteCreated n
     , "updatedAt" .= noteUpdated n
     , "folderId"  .= noteFolderId n
+    , "pinned"    .= notePinned n
     ]
 
 -- | O que o cliente pode ENVIAR ao criar (POST) ou editar (PUT) uma nota.
@@ -397,12 +399,16 @@ initDb c = do
       execute_ c "ALTER TABLE folders ADD COLUMN color TEXT NOT NULL DEFAULT 'default'"
   execute_ c "CREATE TABLE IF NOT EXISTS folder_notes (note_id INTEGER PRIMARY KEY REFERENCES notes(id), folder_id INTEGER NOT NULL REFERENCES folders(id))"
   execute_ c "CREATE INDEX IF NOT EXISTS folder_notes_folder_id ON folder_notes(folder_id)"
+  execute_ c "CREATE TABLE IF NOT EXISTS pinned_notes (note_id INTEGER PRIMARY KEY REFERENCES notes(id))"
 
 -- | Início comum de todos os SELECTs.
 -- A ORDEM das colunas aqui tem que bater com a ordem dos campos de Note,
 -- porque o FromRow lê coluna por coluna, em sequência.
 selectCols :: Query
-selectCols = "SELECT id, title, content, kind, language, created_at, updated_at, folder_id FROM notes LEFT JOIN folder_notes ON note_id = id"
+selectCols = "SELECT id, title, content, kind, language, created_at, updated_at, folder_id, EXISTS (SELECT 1 FROM pinned_notes WHERE note_id = notes.id) AS pinned FROM notes LEFT JOIN folder_notes ON note_id = id"
+
+noteOrder :: Query
+noteOrder = " ORDER BY pinned DESC, updated_at DESC, id DESC"
 
 data Folder = Folder Int Text Text Int Int
 
@@ -433,6 +439,18 @@ newtype FolderMove = FolderMove (Maybe Int)
 instance FromJSON FolderMove where
   parseJSON = withObject "FolderMove" $ \o -> FolderMove <$> o .: "folderId"
 
+newtype NotePin = NotePin Bool
+
+instance FromJSON NotePin where
+  parseJSON = withObject "NotePin" $ \o -> NotePin <$> o .: "pinned"
+
+setNotePin :: Connection -> Int -> Bool -> IO (Maybe Note)
+setNotePin c i pinned = withTransaction c $ do
+  if pinned
+    then execute c "INSERT INTO pinned_notes (note_id) SELECT id FROM notes WHERE id = ? ON CONFLICT DO NOTHING" (Only i)
+    else execute c "DELETE FROM pinned_notes WHERE note_id = ?" (Only i)
+  getNote c i
+
 listFolders :: Connection -> IO [Folder]
 listFolders c = query_ c
   "SELECT folders.id, name, color, COUNT(CASE WHEN kind = 'text' THEN 1 END), COUNT(CASE WHEN kind = 'code' THEN 1 END) FROM folders LEFT JOIN folder_notes ON folder_id = folders.id LEFT JOIN notes ON notes.id = note_id GROUP BY folders.id ORDER BY name"
@@ -461,10 +479,10 @@ listNotes c mq = case T.strip <$> mq of     -- tira espaços das pontas do termo
   -- "Just q | condição" só entra neste caso se houver termo E ele não for vazio
   Just q | not (T.null q) ->
     let pat = "%" <> q <> "%"                -- "<>" concatena textos
-    in query c (selectCols <> " WHERE title LIKE ? OR content LIKE ? OR language LIKE ? ORDER BY updated_at DESC")
+    in query c (selectCols <> " WHERE title LIKE ? OR content LIKE ? OR language LIKE ?" <> noteOrder)
          (pat, pat, pat)                     -- um valor para cada "?"
   -- "_" significa "qualquer outro caso" (Nothing ou termo vazio)
-  _ -> query_ c (selectCols <> " ORDER BY updated_at DESC")
+  _ -> query_ c (selectCols <> noteOrder)
   -- query  = SELECT com parâmetros;  query_ = SELECT sem parâmetros
 
 -- | Busca uma nota pelo id. Devolve Nothing se ela não existir.
@@ -509,6 +527,7 @@ updateNote c i n = do
 -- | Apaga uma nota. Devolve True se apagou, False se o id não existia.
 deleteNote :: Connection -> Int -> IO Bool
 deleteNote c i = withTransaction c $ do
+  execute c "DELETE FROM pinned_notes WHERE note_id = ?" (Only i)
   execute c "DELETE FROM folder_notes WHERE note_id = ?" (Only i)
   execute c "DELETE FROM notes WHERE id = ?" (Only i)
   -- (> 0) é uma função "maior que zero" e <$> a aplica ao resultado de
@@ -686,7 +705,11 @@ main = do
         Just (code, message) -> status code >> jsonError message
 
     get "/api/folders/:id/notes" $ withId $ \i ->
-      json =<< db (\c -> query c (selectCols <> " WHERE folder_id = ? ORDER BY updated_at DESC") (Only i) :: IO [Note])
+      json =<< db (\c -> query c (selectCols <> " WHERE folder_id = ?" <> noteOrder) (Only i) :: IO [Note])
+
+    put "/api/notes/:id/pin" $ withId $ \i -> do
+      NotePin pinned <- jsonData
+      db (\c -> setNotePin c i pinned) >>= maybe notFound404 json
 
     put "/api/notes/:id/folder" $ withId $ \i -> do
       FolderMove destination <- jsonData

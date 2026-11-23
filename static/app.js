@@ -42,6 +42,7 @@ const api = {
   updateFolder: (id, name, color) => request('PUT', `/api/folders/${id}`, { name, color }),
   folderNotes: (id) => request('GET', `/api/folders/${id}/notes`),
   moveNote: (id, folderId) => request('PUT', `/api/notes/${id}/folder`, { folderId }),
+  pinNote: (id, pinned) => request('PUT', `/api/notes/${id}/pin`, { pinned }),
 };
 
 // ---------- Estado ----------
@@ -78,6 +79,8 @@ const el = {
   metaKind: $('#meta-kind'),
   metaCreated: $('#meta-created'),
   metaUpdated: $('#meta-updated'),
+  pinNote: $('#pin-note'),
+  pinLabel: $('#pin-note-label'),
   crumbKind: $('#crumb-kind'),
   crumbSep2: $('#crumb-sep2'),
   crumbTitle: $('#crumb-title'),
@@ -165,6 +168,8 @@ function renderCounts() {
 function renderList() {
   renderCounts();
   const items = state.notes.filter((n) => state.filter === 'all' || n.kind === state.filter);
+  items.sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))
+    || Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || b.id - a.id);
   el.list.replaceChildren();
 
   if (!items.length) {
@@ -177,7 +182,7 @@ function renderList() {
 
   let lastGroup = null;
   for (const n of items) {
-    const group = groupOf(n.updatedAt);
+    const group = n.pinned ? 'Fixados' : groupOf(n.updatedAt);
     if (group !== lastGroup) {
       const g = document.createElement('div');
       g.className = 'group-label';
@@ -316,6 +321,8 @@ function syncScroll() {
 function renderMeta() {
   const c = state.current;
   if (!c) return;
+  el.pinNote.dataset.pinned = Boolean(c.pinned);
+  el.pinLabel.textContent = c.pinned ? 'Desafixar' : 'Fixar';
   const isCode = c.kind === 'code';
 
   el.metaKind.className = 'pill' + (isCode ? ' code' : '');
@@ -457,7 +464,8 @@ async function openFolders(folder = null) {
     folderEmpty.textContent = folder ? 'Nenhuma nota ou código nesta pasta.' : 'Nenhuma pasta criada.';
     for (const item of items) {
       if (folder) {
-        const type = item.kind === 'code' ? 'Código' : 'Nota';
+        const kind = item.kind === 'code' ? 'Código' : 'Nota';
+        const type = item.pinned ? (item.kind === 'code' ? 'Código · Fixado' : 'Nota · Fixada') : kind;
         const preview = firstLine(item.content);
         addFolderCard(ICONS[item.kind] || ICONS.text, item.title || 'Sem título',
           preview ? `${type} · ${preview}` : type, () => openNote(item.id, { note: item, folder }));
@@ -643,10 +651,12 @@ async function save() {
 }
 
 async function persistNote(c) {
+  const pinnedAtStart = c.pinned;
   try {
     const saved = await api.update(c.id, {
       title: c.title, content: c.content, kind: c.kind, language: c.language,
     });
+    if (c.pinned !== pinnedAtStart) saved.pinned = c.pinned;
     state.notes = [saved, ...state.notes.filter((n) => n.id !== saved.id)];
     if (state.current === c) {
       state.current.updatedAt = saved.updatedAt;
@@ -945,6 +955,26 @@ $('#new-code').addEventListener('click', () => newNote('code'));
 $('#empty-text').addEventListener('click', () => newNote('text'));
 $('#empty-code').addEventListener('click', () => newNote('code'));
 $('#copy-all').addEventListener('click', copyContent);
+el.pinNote.addEventListener('click', async () => {
+  const note = state.current;
+  if (!note || el.pinNote.disabled) return;
+  el.pinNote.disabled = true;
+  try {
+    const { pinned } = await api.pinNote(note.id, !note.pinned);
+    note.pinned = pinned;
+    const cached = state.notes.find((item) => item.id === note.id);
+    if (cached) cached.pinned = pinned;
+    if (state.current?.id === note.id) {
+      state.current.pinned = pinned;
+      renderMeta();
+    }
+    renderList();
+  } catch {
+    toast('Não foi possível alterar a fixação');
+  } finally {
+    el.pinNote.disabled = false;
+  }
+});
 $('#copy-code').addEventListener('click', copyContent);
 $('#delete').addEventListener('click', deleteCurrent);
 $$('.tab').forEach((t) => t.addEventListener('click', () => setFilter(t.dataset.filter)));

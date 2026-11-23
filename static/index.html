@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-  <link rel="stylesheet" href="/style.css?v=folder-back">
+  <link rel="stylesheet" href="/style.css?v=note-pins">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -194,9 +194,13 @@
             <span class="pill" id="meta-kind"></span>
             <span class="meta-item" id="meta-created"></span>
             <span class="meta-item" id="meta-updated"></span>
-            <button type="button" class="btn btn-secondary note-folder-button" id="move-note" aria-haspopup="dialog">
+            <button type="button" class="btn btn-secondary note-meta-button" id="move-note" aria-haspopup="dialog">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
               Pasta
+            </button>
+            <button type="button" class="btn btn-secondary note-meta-button" id="pin-note">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5-4 1-2 5v3l-3-1-4-4-1-3h3l5-2 1-4Z"/><path d="m10 14-6 6"/></svg>
+              <span id="pin-note-label">Fixar</span>
             </button>
           </div>
 
@@ -290,6 +294,6 @@
       </div>
     </form>
   </dialog>
-  <script src="/app.js?v=folder-back"></script>
+  <script src="/app.js?v=note-pins"></script>
 </body>
 </html>
