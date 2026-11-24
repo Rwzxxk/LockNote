@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-  <link rel="stylesheet" href="/style.css?v=sidebar-motion">
+  <link rel="stylesheet" href="/style.css?v=split-view">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -122,6 +122,9 @@
             </button>
           </div>
           <span class="divider"></span>
+          <button type="button" class="icon-btn" id="split-note" title="Abrir outra nota em tela dividida" aria-label="Abrir outra nota em tela dividida" aria-haspopup="dialog">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>
+          </button>
           <button class="icon-btn" id="copy-all" title="Copiar conteúdo" aria-label="Copiar conteúdo">
             <svg viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
           </button>
@@ -221,6 +224,16 @@
             </div>
           </div>
         </article>
+        <section id="split-preview" class="split-preview" aria-labelledby="split-preview-title" hidden>
+          <header>
+            <h2 id="split-preview-title"></h2>
+            <button type="button" class="btn btn-secondary" id="split-edit">Editar</button>
+            <button type="button" class="icon-btn" id="split-close" title="Fechar divisão" aria-label="Fechar divisão">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg>
+            </button>
+          </header>
+          <pre id="split-content" tabindex="0"><code class="hljs"></code></pre>
+        </section>
       </main>
 
       <footer class="statusbar" id="statusbar" hidden>
@@ -321,6 +334,19 @@
       </div>
     </form>
   </dialog>
-  <script src="/app.js?v=delete-note-dialog"></script>
+  <dialog id="split-dialog" class="registration" aria-labelledby="split-dialog-title">
+    <form id="split-form">
+      <h2 id="split-dialog-title">Abrir em tela dividida</h2>
+      <label>Nota ou código
+        <select id="split-choice" required></select>
+      </label>
+      <p id="split-message" role="status"></p>
+      <div class="registration-actions">
+        <button type="button" class="btn btn-secondary" id="split-cancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary" id="split-submit" disabled>Abrir</button>
+      </div>
+    </form>
+  </dialog>
+  <script src="/app.js?v=split-view"></script>
 </body>
 </html>

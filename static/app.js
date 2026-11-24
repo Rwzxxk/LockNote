@@ -51,6 +51,7 @@ const api = {
 const state = {
   notes: [],
   current: null,   // nota aberta (cópia local editável)
+  split: null,
   openFolder: null,
   noteFolderOrigin: null,
   filter: 'all',
@@ -294,15 +295,18 @@ function renderHighlight() {
   if (!state.current || state.current.kind !== 'code') return;
   const text = el.content.value;
   const lang = detectLanguage(text);
-  const html = lang
-    ? hljs.highlight(text, { language: lang, ignoreIllegals: true }).value
-    : escapeHtml(text);
   // linha extra para o <pre> acompanhar o cursor na última linha vazia
-  el.hlCode.innerHTML = html + '\n';
+  el.hlCode.innerHTML = highlightedCode(text, lang) + '\n';
   state.current.language = lang;
   el.codeLang.textContent = lang ? langName(lang) : (text.trim() ? 'texto simples' : 'detectando…');
   renderGutter();
   syncScroll();
+}
+
+function highlightedCode(text, language) {
+  return language && window.hljs?.getLanguage(language)
+    ? hljs.highlight(text, { language, ignoreIllegals: true }).value
+    : escapeHtml(text);
 }
 
 function renderGutter() {
@@ -369,7 +373,84 @@ function applyKind() {
   renderStats();
 }
 
+const splitPreview = $('#split-preview');
+const splitContent = $('#split-content');
+const splitDialog = $('#split-dialog');
+const splitChoice = $('#split-choice');
+const splitSubmit = $('#split-submit');
+const splitMessage = $('#split-message');
+let splitRequest = 0;
+
+function renderSplit() {
+  const split = state.split;
+  splitPreview.hidden = !split;
+  splitPreview.parentElement.classList.toggle('split-view', Boolean(split));
+  splitPreview.parentElement.classList.toggle('split-reversed', Boolean(split?.reversed));
+  if (!split) return;
+  const { note } = split;
+  const code = note.kind === 'code';
+  $('#split-preview-title').textContent = note.title || 'Sem título';
+  splitContent.classList.toggle('code', code);
+  splitContent.firstElementChild.innerHTML = code
+    ? highlightedCode(note.content, note.language)
+    : escapeHtml(note.content);
+  splitContent.scrollTop = 0;
+  splitContent.scrollLeft = 0;
+}
+
+$('#split-note').addEventListener('click', async () => {
+  const requestId = ++splitRequest;
+  const current = state.current;
+  const form = $('#split-form');
+  form.onsubmit = (event) => event.preventDefault();
+  splitChoice.replaceChildren();
+  splitSubmit.disabled = true;
+  splitMessage.textContent = 'Carregando notas…';
+  splitDialog.showModal();
+  try {
+    const notes = await api.list();
+    if (!splitDialog.open || requestId !== splitRequest || state.current !== current) return;
+    for (const note of notes) {
+      if (note.id === current.id) continue;
+      const kind = note.kind === 'code' ? 'Código' : 'Nota';
+      splitChoice.add(new Option(`${note.title || 'Sem título'} · ${kind}`, note.id));
+    }
+    const previous = notes.find((note) => note.id === state.split?.note.id);
+    if (previous) splitChoice.value = String(previous.id);
+    splitSubmit.disabled = !splitChoice.options.length;
+    splitMessage.textContent = splitSubmit.disabled ? 'Crie outra nota ou código para dividir a tela.' : '';
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      const note = notes.find((item) => item.id === Number(splitChoice.value));
+      if (!note || note.id === state.current?.id || state.current !== current) return;
+      state.split = { note, folder: null, reversed: state.split?.reversed ?? false };
+      renderSplit();
+      splitDialog.close();
+    };
+  } catch {
+    if (splitDialog.open && requestId === splitRequest) {
+      splitMessage.textContent = 'Não foi possível carregar as notas.';
+    }
+  }
+});
+
+$('#split-cancel').addEventListener('click', () => splitDialog.close());
+$('#split-close').addEventListener('click', () => {
+  state.split = null;
+  renderSplit();
+  $('#split-note').focus();
+});
+$('#split-edit').addEventListener('click', async () => {
+  const id = state.split.note.id;
+  await openNote(id);
+  if (state.current?.id === id) el.content.focus();
+});
+
 function showEditor(show) {
+  if (!show) {
+    state.split = null;
+    renderSplit();
+  }
   el.foldersView.hidden = true;
   el.empty.hidden = show;
   el.editor.hidden = !show;
@@ -386,10 +467,17 @@ function showEditor(show) {
 let folderNavigation = 0;
 
 async function openNote(id, { note, folder } = {}) {
-  folderNavigation++;
-  if (!await flushSave()) return;
-  const n = note || state.notes.find((x) => x.id === id);
+  const navigation = ++folderNavigation;
+  if (!await flushSave() || navigation !== folderNavigation) return;
+  const split = state.split;
+  const swapping = split?.note.id === id;
+  const n = swapping ? split.note : note || state.notes.find((x) => x.id === id);
   if (!n) return;
+  if (swapping) {
+    state.split = { note: state.current, folder: state.noteFolderOrigin, reversed: !split.reversed };
+    folder ??= split.folder;
+    renderSplit();
+  }
   state.current = { ...n };
   state.noteFolderOrigin = folder || null;
   el.title.value = n.title;
@@ -808,7 +896,12 @@ deleteNoteForm.addEventListener('submit', async (event) => {
   }
   state.dirty = false;
   state.current = null;
-  if (state.notes.length) {
+  if (state.split) {
+    const { note, folder } = state.split;
+    state.split = null;
+    renderSplit();
+    await openNote(note.id, { note, folder });
+  } else if (state.notes.length) {
     openNote(state.notes[0].id);
   } else {
     showEditor(false);
@@ -988,7 +1081,7 @@ el.search.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (registration.open || login.open || editAccount.open || moveNoteDialog.open
+  if (splitDialog.open || registration.open || login.open || editAccount.open || moveNoteDialog.open
     || removeFolderDialog.open || deleteNoteDialog.open) return;
   if (e.key === 'Escape' && accountControl.open) {
     accountControl.open = false;
