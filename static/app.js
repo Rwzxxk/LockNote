@@ -382,7 +382,11 @@ function renderStats() {
 
 function applyKind() {
   const isCode = state.current.kind === 'code';
-  $$('.kind-toggle button').forEach((b) => b.classList.toggle('active', b.dataset.kind === state.current.kind));
+  $$('.kind-toggle button').forEach((button) => {
+    const active = button.dataset.kind === state.current.kind;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
   el.sheet.classList.toggle('code', isCode);
   el.content.spellcheck = !isCode;
   el.content.placeholder = isCode ? '// cole ou escreva seu código — a linguagem é detectada sozinha' : 'Comece a escrever…';
@@ -393,6 +397,9 @@ function applyKind() {
 }
 
 const splitPreview = $('#split-preview');
+const splitPage = splitPreview.parentElement;
+const splitDivider = $('#split-divider');
+const stackedSplit = matchMedia('(max-width: 560px)');
 const splitCloseCurrent = $('#split-close-current');
 const deleteButton = $('#delete');
 const splitContent = $('#split-content');
@@ -402,6 +409,61 @@ const splitSubmit = $('#split-submit');
 const splitMessage = $('#split-message');
 const splitDropTargets = $('#split-drop-targets');
 let splitRequest = 0;
+let splitResize = null;
+
+function setSplitSize(size) {
+  const first = Math.round(Math.max(25, Math.min(75, size)));
+  splitPage.style.setProperty('--split-start', `${first / 50}fr`);
+  splitPage.style.setProperty('--split-end', `${(100 - first) / 50}fr`);
+  splitDivider.setAttribute('aria-valuenow', first);
+}
+
+function updateSplitOrientation() {
+  splitDivider.setAttribute('aria-orientation', stackedSplit.matches ? 'horizontal' : 'vertical');
+}
+
+updateSplitOrientation();
+stackedSplit.addEventListener('change', updateSplitOrientation);
+
+splitDivider.addEventListener('pointerdown', (event) => {
+  if (!state.split || splitResize || event.button !== 0) return;
+  splitPage.classList.add('split-resizing');
+  const vertical = stackedSplit.matches;
+  const page = splitPage.getBoundingClientRect();
+  const padding = getComputedStyle(splitPage);
+  const handle = splitDivider.getBoundingClientRect();
+  const size = vertical ? handle.height : handle.width;
+  const start = vertical ? page.top + parseFloat(padding.paddingTop) : page.left + parseFloat(padding.paddingLeft);
+  const end = vertical ? page.bottom - parseFloat(padding.paddingBottom) : page.right - parseFloat(padding.paddingRight);
+  const offset = vertical ? event.clientY - handle.top : event.clientX - handle.left;
+  splitResize = { id: event.pointerId, vertical, start: start + offset, range: end - start - size };
+  splitDivider.setPointerCapture(event.pointerId);
+});
+
+splitDivider.addEventListener('pointermove', (event) => {
+  if (!splitResize || splitResize.id !== event.pointerId || splitResize.range <= 0) return;
+  const position = splitResize.vertical ? event.clientY : event.clientX;
+  setSplitSize(100 * (position - splitResize.start) / splitResize.range);
+});
+
+function endSplitResize() {
+  if (!splitResize) return;
+  const { id } = splitResize;
+  splitResize = null;
+  splitPage.classList.remove('split-resizing');
+  if (splitDivider.hasPointerCapture(id)) splitDivider.releasePointerCapture(id);
+}
+
+splitDivider.addEventListener('lostpointercapture', endSplitResize);
+splitDivider.addEventListener('keydown', (event) => {
+  const smaller = stackedSplit.matches ? 'ArrowUp' : 'ArrowLeft';
+  const larger = stackedSplit.matches ? 'ArrowDown' : 'ArrowRight';
+  const current = Number(splitDivider.getAttribute('aria-valuenow'));
+  const sizes = { [smaller]: current - 5, [larger]: current + 5, Home: 25, End: 75 };
+  if (!Object.hasOwn(sizes, event.key)) return;
+  event.preventDefault();
+  setSplitSize(sizes[event.key]);
+});
 
 function clearSplitDrag() {
   draggedNoteId = null;
@@ -437,12 +499,23 @@ for (const target of splitDropTargets.children) {
 
 function renderSplit() {
   const split = state.split;
-  const page = splitPreview.parentElement;
   splitPreview.inert = !split;
   splitCloseCurrent.hidden = !split;
   deleteButton.hidden = Boolean(split);
-  if (split) page.classList.toggle('split-reversed', split.reversed);
-  page.classList.toggle('split-view', Boolean(split));
+  splitDivider.hidden = !split;
+  if (!split) endSplitResize();
+  if (split) {
+    const prepareSide = !splitPage.classList.contains('split-view')
+      && splitPage.classList.contains('split-reversed') !== split.reversed;
+    if (prepareSide) splitPage.classList.add('split-resizing');
+    splitPage.classList.toggle('split-reversed', split.reversed);
+    if (prepareSide) {
+      // Posiciona o editor antes de animar o novo painel.
+      splitPage.getBoundingClientRect();
+      splitPage.classList.remove('split-resizing');
+    }
+  }
+  splitPage.classList.toggle('split-view', Boolean(split));
   if (!split) return;
   const { note } = split;
   const code = note.kind === 'code';
@@ -535,6 +608,7 @@ splitContent.addEventListener('keydown', (event) => {
 
 function showEditor(show) {
   if (!show) {
+    closeNoteOptions();
     clearSplitDrag();
     state.split = null;
     renderSplit();
@@ -607,12 +681,123 @@ const folderForm = $('#folder-form');
 const folderFormButton = $('#show-folder-form');
 const editFolderButton = $('#edit-folder');
 const folderColorPreview = $('#folder-color-preview');
+const folderColorPicker = $('#folder-color-picker');
+const folderColorPanel = $('#folder-color-panel');
+const folderColorWheel = $('#folder-color-wheel');
+const folderColorBrightness = $('#folder-color-brightness');
+const folderColorText = $('#folder-color-text');
+const folderColorPresets = {
+  blue: '#4389ed', green: '#279d6d', orange: '#de831e', pink: '#d9609c', purple: '#9971e8',
+};
+let folderHSV;
 const folderSubmit = folderForm.querySelector('[type="submit"]');
 const folderGrid = $('#folders-grid');
 const folderEmpty = $('#folders-empty');
 const folderError = $('#folder-error');
 const folderBack = $('#folder-back');
 const folderTitle = $('#folders-title');
+
+function normalizeFolderColor(value) {
+  const text = value.trim().toLowerCase();
+  if (!text) return 'default';
+  const hex = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/.exec(text);
+  if (hex) {
+    const digits = hex[1];
+    return '#' + (digits.length === 3 ? [...digits].map((digit) => digit.repeat(2)).join('') : digits);
+  }
+  const rgb = /^rgb\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*\)$/.exec(text)
+    || /^(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})$/.exec(text);
+  const channels = rgb?.slice(1).map(Number);
+  return channels?.every((channel) => channel <= 255) ? folderHex(channels) : null;
+}
+
+function folderHex(channels) {
+  return '#' + channels.map((channel) => Math.round(channel).toString(16).padStart(2, '0')).join('');
+}
+
+function hexToFolderHSV(hex) {
+  const [red, green, blue] = hex.slice(1).match(/../g).map((channel) => parseInt(channel, 16) / 255);
+  const value = Math.max(red, green, blue);
+  const delta = value - Math.min(red, green, blue);
+  let hue = 0;
+  if (delta) {
+    if (value === red) hue = (green - blue) / delta;
+    else if (value === green) hue = 2 + (blue - red) / delta;
+    else hue = 4 + (red - green) / delta;
+  }
+  return { hue: (hue + 6) % 6, saturation: value ? delta / value : 0, value };
+}
+
+function setFolderColor(element, color) {
+  const hex = normalizeFolderColor(Object.hasOwn(folderColorPresets, color) ? folderColorPresets[color] : color);
+  element.dataset.color = hex && hex !== 'default' ? 'custom' : 'default';
+  if (element.dataset.color === 'custom') element.style.setProperty('--folder-color', hex);
+  else element.style.removeProperty('--folder-color');
+}
+
+function renderFolderColor(hex) {
+  const { hue, saturation, value } = folderHSV;
+  const angle = hue * Math.PI / 3;
+  folderColorWheel.style.setProperty('--wheel-x', `${50 + Math.sin(angle) * saturation * 50}%`);
+  folderColorWheel.style.setProperty('--wheel-y', `${50 - Math.cos(angle) * saturation * 50}%`);
+  folderColorWheel.style.setProperty('--wheel-shade', 1 - value);
+  folderColorBrightness.value = Math.round(value * 100);
+  setFolderColor(folderColorPreview, hex);
+}
+
+function applyFolderWheelColor() {
+  const { hue, saturation, value } = folderHSV;
+  const chroma = value * saturation;
+  const middle = chroma * (1 - Math.abs(hue % 2 - 1));
+  const channels = [
+    [chroma, middle, 0], [middle, chroma, 0], [0, chroma, middle],
+    [0, middle, chroma], [middle, 0, chroma], [chroma, 0, middle],
+  ][Math.floor(hue)];
+  folderColorText.value = folderHex(channels.map((channel) => 255 * (channel + value - chroma)));
+  folderError.hidden = true;
+  renderFolderColor(folderColorText.value);
+}
+
+function selectFolderWheelColor(event) {
+  const bounds = folderColorWheel.getBoundingClientRect();
+  const x = 2 * (event.clientX - bounds.left) / bounds.width - 1;
+  const y = 2 * (event.clientY - bounds.top) / bounds.height - 1;
+  folderHSV.hue = (Math.atan2(x, -y) * 3 / Math.PI + 6) % 6;
+  folderHSV.saturation = Math.min(1, Math.hypot(x, y));
+  applyFolderWheelColor();
+}
+
+folderColorWheel.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
+  folderColorWheel.setPointerCapture(event.pointerId);
+  selectFolderWheelColor(event);
+});
+folderColorWheel.addEventListener('pointermove', (event) => {
+  if (folderColorWheel.hasPointerCapture(event.pointerId)) selectFolderWheelColor(event);
+});
+folderColorBrightness.addEventListener('input', () => {
+  folderHSV.value = Number(folderColorBrightness.value) / 100;
+  applyFolderWheelColor();
+});
+function updateFolderColorFromText() {
+  const hex = normalizeFolderColor(folderColorText.value);
+  if (!hex) return;
+  folderError.hidden = true;
+  folderHSV = hexToFolderHSV(hex === 'default' ? '#6544ce' : hex);
+  renderFolderColor(hex);
+}
+
+function toggleFolderColorPanel(open) {
+  folderColorPanel.hidden = !open;
+  folderColorPicker.setAttribute('aria-expanded', String(open));
+}
+
+folderColorPicker.addEventListener('click', () => toggleFolderColorPanel(folderColorPanel.hidden));
+folderColorText.addEventListener('input', updateFolderColorFromText);
+$('#folder-color-reset').addEventListener('click', () => {
+  folderColorText.value = '';
+  updateFolderColorFromText();
+});
 
 function addFolderCard(icon, title, subtitle, onClick, folder) {
   const card = document.createElement('button');
@@ -629,7 +814,7 @@ function addFolderCard(icon, title, subtitle, onClick, folder) {
     folderGrid.append(card);
     return;
   }
-  card.dataset.color = folder.color || 'default';
+  setFolderColor(card, folder.color || 'default');
   const item = document.createElement('div');
   item.className = 'folder-grid-item';
   const remove = document.createElement('button');
@@ -698,21 +883,27 @@ function toggleFolderForm(folder = null) {
   if (folderForm.hidden) return;
   folderError.hidden = true;
   folderForm.elements.name.value = folder?.name || '';
-  folderForm.elements.color.value = folder?.color || 'default';
-  folderColorPreview.dataset.color = folderForm.elements.color.value;
+  const saved = folder?.color || 'default';
+  folderColorText.value = Object.hasOwn(folderColorPresets, saved) ? folderColorPresets[saved] : saved === 'default' ? '' : saved;
+  toggleFolderColorPanel(false);
+  updateFolderColorFromText();
   folderSubmit.textContent = folder ? 'Salvar alterações' : 'Criar pasta';
   folderForm.elements.name.focus();
 }
 folderFormButton.addEventListener('click', () => toggleFolderForm());
 editFolderButton.addEventListener('click', () => toggleFolderForm(state.openFolder));
-folderForm.elements.color.addEventListener('change', () => {
-  folderColorPreview.dataset.color = folderForm.elements.color.value;
-});
 folderForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (folderSubmit.disabled) return;
   const folder = state.openFolder;
-  const { name, color } = Object.fromEntries(new FormData(folderForm));
+  const { name } = Object.fromEntries(new FormData(folderForm));
+  const color = normalizeFolderColor(folderColorText.value);
+  if (!color) {
+    folderError.textContent = 'Use um HEX como #7c3aed ou um RGB como rgb(124, 58, 237).';
+    folderError.hidden = false;
+    folderColorText.focus();
+    return;
+  }
   const navigation = folderNavigation;
   folderSubmit.disabled = true;
   folderError.hidden = true;
@@ -1023,9 +1214,27 @@ function insertText(text) {
 
 // ---------- Eventos ----------
 const accountControl = $('#account-control');
+const noteMore = $('#note-more');
+const noteOverflow = $('#note-overflow');
+
+function closeNoteOptions(restoreFocus = false) {
+  if (noteMore.getAttribute('aria-expanded') !== 'true') return;
+  noteMore.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) noteMore.focus();
+}
+
+noteMore.addEventListener('click', () => {
+  const open = noteMore.getAttribute('aria-expanded') === 'true';
+  noteMore.setAttribute('aria-expanded', String(!open));
+});
+noteOverflow.addEventListener('click', (event) => {
+  if (event.target.closest('button')) closeNoteOptions(noteOverflow.contains(document.activeElement));
+});
+matchMedia('(max-width: 560px)').addEventListener('change', () => closeNoteOptions());
 const accountToggle = $('#account-toggle');
 
 document.addEventListener('click', (e) => {
+  if (!noteMore.contains(e.target) && !noteOverflow.contains(e.target)) closeNoteOptions();
   if (accountControl.open && !accountControl.contains(e.target)) accountControl.open = false;
 });
 
@@ -1114,7 +1323,10 @@ el.pinNote.addEventListener('click', async () => {
   }
 });
 $('#copy-code').addEventListener('click', copyContent);
-deleteButton.addEventListener('click', openDeleteNoteDialog);
+deleteButton.addEventListener('click', () => {
+  closeNoteOptions(true);
+  openDeleteNoteDialog();
+});
 $$('.tab').forEach((t) => t.addEventListener('click', () => setFilter(t.dataset.filter)));
 
 el.title.addEventListener('input', () => {
@@ -1181,6 +1393,10 @@ el.search.addEventListener('keydown', (e) => {
 document.addEventListener('keydown', (e) => {
   if (splitDialog.open || registration.open || login.open || editAccount.open || moveNoteDialog.open
     || removeFolderDialog.open || deleteNoteDialog.open) return;
+  if (e.key === 'Escape' && noteMore.getAttribute('aria-expanded') === 'true') {
+    closeNoteOptions(true);
+    return;
+  }
   if (e.key === 'Escape' && accountControl.open) {
     accountControl.open = false;
     accountToggle.focus();

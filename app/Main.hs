@@ -55,6 +55,7 @@ module Main (main) where
 
 import Control.Monad (when)
 import Data.Aeson                     -- JSON: ToJSON, FromJSON, object, (.=) ...
+import Data.Char (isHexDigit)
 import Data.Maybe (fromMaybe)         -- fromMaybe padrao x: usa o padrão quando x é Nothing
 import Data.Text (Text)               -- tipo de texto eficiente (Unicode)
 import qualified Data.Text as T       -- funções sobre Text (strip, null ...)
@@ -242,11 +243,15 @@ instance FromJSON FolderInput where
 
 withFolderInput :: (Text -> Text -> ActionM ()) -> ActionM ()
 withFolderInput action = do
-  FolderInput rawName color <- jsonData
+  FolderInput rawName rawColor <- jsonData
   let name = T.strip rawName
+      color = T.toLower (T.strip rawColor)
+      hexColor = case T.stripPrefix "#" color of
+        Just digits -> T.length digits == 6 && T.all isHexDigit digits
+        Nothing -> False
   if T.null name || T.length name > 80
     then status status400 >> jsonError "Informe um nome de pasta com até 80 caracteres."
-    else if color `elem` ["default", "blue", "green", "orange", "pink", "purple"]
+    else if hexColor || color `elem` ["default", "blue", "green", "orange", "pink", "purple"]
       then action name color
       else status status400 >> jsonError "Selecione uma cor válida."
 

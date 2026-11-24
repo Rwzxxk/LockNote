@@ -8,9 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-  <link rel="stylesheet" href="/style.css?v=split-click">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" id="syntax-light" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
+  <link rel="stylesheet" id="syntax-dark" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <script src="/theme.js?v=1"></script>
+  <link rel="stylesheet" href="/style.css?v=three-folder-columns">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/haskell.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/powershell.min.js"></script>
@@ -85,6 +86,14 @@
             <span class="sb-avatar" id="sidebar-avatar" aria-hidden="true">🐱</span>
             <span id="account-name">Visitante</span>
           </div>
+          <label class="theme-picker">
+            Tema
+            <select id="theme-choice">
+              <option value="system">Sistema</option>
+              <option value="light">Branco</option>
+              <option value="dark">Escuro</option>
+            </select>
+          </label>
         </div>
         <div class="sb-storage">
           <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
@@ -110,27 +119,33 @@
           <span class="crumb-current" id="crumb-title"></span>
         </nav>
 
-        <span class="spacer"></span>
-
         <div class="note-tools" id="note-tools" hidden>
-          <div class="kind-toggle" role="group" aria-label="Tipo da nota">
-            <button data-kind="text" title="Texto" aria-label="Texto">
-              <svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg>
-            </button>
-            <button data-kind="code" title="Código" aria-label="Código">
-              <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            </button>
-          </div>
-          <span class="divider"></span>
           <button type="button" class="icon-btn" id="split-note" title="Abrir outra nota em tela dividida" aria-label="Abrir outra nota em tela dividida" aria-haspopup="dialog">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>
           </button>
-          <button class="icon-btn" id="copy-all" title="Copiar conteúdo" aria-label="Copiar conteúdo">
-            <svg viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+          <button type="button" class="icon-btn note-overflow-trigger" id="note-more" title="Mais opções" aria-label="Mais opções" aria-expanded="false" aria-controls="note-overflow">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
           </button>
-          <button class="icon-btn danger" id="delete" title="Excluir nota" aria-label="Excluir nota">
-            <svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2"/></svg>
-          </button>
+          <div class="note-overflow-panel" id="note-overflow">
+            <div class="kind-toggle" role="group" aria-label="Tipo da nota">
+              <button type="button" data-kind="text" title="Texto" aria-label="Texto">
+                <svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg>
+                <span class="note-action-label">Texto</span>
+              </button>
+              <button type="button" data-kind="code" title="Código" aria-label="Código">
+                <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                <span class="note-action-label">Código</span>
+              </button>
+            </div>
+            <button class="icon-btn" id="copy-all" title="Copiar conteúdo" aria-label="Copiar conteúdo">
+              <svg viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+              <span class="note-action-label">Copiar conteúdo</span>
+            </button>
+            <button class="icon-btn danger" id="delete" title="Excluir nota" aria-label="Excluir nota">
+              <svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2"/></svg>
+              <span class="note-action-label">Excluir nota</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -149,16 +164,24 @@
           <form id="folder-form" class="folder-form" hidden>
             <label for="folder-name">Nome da pasta</label>
             <input id="folder-name" name="name" maxlength="80" required>
-            <label for="folder-color">Cor</label>
-            <span class="folder-color-preview" id="folder-color-preview" aria-hidden="true"></span>
-            <select id="folder-color" name="color">
-              <option value="default">Padrão</option>
-              <option value="blue">Azul</option>
-              <option value="green">Verde</option>
-              <option value="orange">Laranja</option>
-              <option value="pink">Rosa</option>
-              <option value="purple">Roxo</option>
-            </select>
+            <fieldset class="folder-color-group">
+              <legend>Cor da pasta</legend>
+              <div class="folder-color-controls">
+                <button type="button" class="btn btn-secondary" id="folder-color-picker" aria-expanded="false" aria-controls="folder-color-panel">
+                  <span class="folder-color-preview" id="folder-color-preview" aria-hidden="true"></span>
+                  Escolher cor
+                </button>
+                <input id="folder-color-text" name="color" aria-label="Código de cor HEX ou RGB" placeholder="HEX ou RGB" autocomplete="off" spellcheck="false">
+                <button type="button" class="btn btn-secondary" id="folder-color-reset">Usar cor padrão</button>
+              </div>
+              <div class="folder-color-panel" id="folder-color-panel" hidden>
+                <div id="folder-color-wheel" class="folder-color-wheel" aria-hidden="true"></div>
+                <div class="folder-color-brightness">
+                  <label for="folder-color-brightness">Brilho</label>
+                  <input type="range" id="folder-color-brightness" min="0" max="100" value="100">
+                </div>
+              </div>
+            </fieldset>
             <button type="submit" class="btn btn-primary">Criar pasta</button>
             <p id="folder-error" role="alert" hidden></p>
           </form>
@@ -249,6 +272,7 @@
             </div>
           </div>
         </section>
+        <div id="split-divider" class="split-divider" role="separator" tabindex="0" aria-label="Tamanho dos painéis" aria-controls="editor split-preview" aria-orientation="vertical" aria-valuemin="25" aria-valuemax="75" aria-valuenow="50" hidden></div>
         <div id="split-drop-targets" class="split-drop-targets" aria-hidden="true" hidden>
           <div data-split-side="start"></div>
           <div data-split-side="end"></div>
@@ -366,6 +390,6 @@
       </div>
     </form>
   </dialog>
-  <script src="/app.js?v=split-click"></script>
+  <script src="/app.js?v=interface-polish"></script>
 </body>
 </html>
