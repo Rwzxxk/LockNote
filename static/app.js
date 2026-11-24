@@ -408,6 +408,7 @@ const splitChoice = $('#split-choice');
 const splitSubmit = $('#split-submit');
 const splitMessage = $('#split-message');
 const splitDropTargets = $('#split-drop-targets');
+const splitLayoutKey = 'locknote.splitLayout';
 let splitRequest = 0;
 let splitResize = null;
 
@@ -452,6 +453,7 @@ function endSplitResize() {
   splitResize = null;
   splitPage.classList.remove('split-resizing');
   if (splitDivider.hasPointerCapture(id)) splitDivider.releasePointerCapture(id);
+  if (state.split) rememberSplitLayout();
 }
 
 splitDivider.addEventListener('lostpointercapture', endSplitResize);
@@ -463,6 +465,7 @@ splitDivider.addEventListener('keydown', (event) => {
   if (!Object.hasOwn(sizes, event.key)) return;
   event.preventDefault();
   setSplitSize(sizes[event.key]);
+  rememberSplitLayout();
 });
 
 function clearSplitDrag() {
@@ -490,11 +493,60 @@ for (const target of splitDropTargets.children) {
     const existing = state.split?.note.id === id ? state.split : null;
     const note = existing?.note ?? state.notes.find((item) => item.id === id);
     if (note && state.current && state.current.id !== id) {
-      state.split = { note, folder: existing?.folder ?? null, reversed: target.dataset.splitSide === 'start' };
+      state.split = {
+        note,
+        folder: existing?.folder ?? null,
+        view: existing ? readSplitView(existing) : undefined,
+        reversed: target.dataset.splitSide === 'start',
+      };
       renderSplit();
     }
     clearSplitDrag();
   });
+}
+
+function scrollPosition(field) {
+  return { top: field.scrollTop, left: field.scrollLeft };
+}
+
+function restoreScroll(field, position) {
+  field.scrollTop = position?.top ?? 0;
+  field.scrollLeft = position?.left ?? 0;
+}
+
+function readEditorView() {
+  return {
+    ...scrollPosition(el.content),
+    start: el.content.selectionStart,
+    end: el.content.selectionEnd,
+    direction: el.content.selectionDirection,
+  };
+}
+
+function readSplitView(split) {
+  const { top, left } = scrollPosition(splitContent);
+  return {
+    ...split.view,
+    top: top === split.previewPosition?.top ? split.view?.top ?? top : top,
+    left: left === split.previewPosition?.left ? split.view?.left ?? left : left,
+  };
+}
+
+function rememberSplitLayout() {
+  const { current, split } = state;
+  if (!split) {
+    store(splitLayoutKey, '');
+    return;
+  }
+  if (!current || current.id === split.note.id) return;
+  store(splitLayoutKey, JSON.stringify({
+    activeId: current.id,
+    otherId: split.note.id,
+    reversed: split.reversed,
+    size: Number(splitDivider.getAttribute('aria-valuenow')),
+    activeView: readEditorView(),
+    otherView: readSplitView(split),
+  }));
 }
 
 function renderSplit() {
@@ -506,6 +558,7 @@ function renderSplit() {
   if (!split) endSplitResize();
   if (split) {
     const prepareSide = !splitPage.classList.contains('split-view')
+      && !splitPage.classList.contains('split-resizing')
       && splitPage.classList.contains('split-reversed') !== split.reversed;
     if (prepareSide) splitPage.classList.add('split-resizing');
     splitPage.classList.toggle('split-reversed', split.reversed);
@@ -516,7 +569,10 @@ function renderSplit() {
     }
   }
   splitPage.classList.toggle('split-view', Boolean(split));
-  if (!split) return;
+  if (!split) {
+    rememberSplitLayout();
+    return;
+  }
   const { note } = split;
   const code = note.kind === 'code';
   $('#split-preview-title').textContent = note.title || 'Sem título';
@@ -529,8 +585,9 @@ function renderSplit() {
   splitContent.firstElementChild.innerHTML = code
     ? highlightedCode(note.content, note.language)
     : escapeHtml(note.content);
-  splitContent.scrollTop = 0;
-  splitContent.scrollLeft = 0;
+  restoreScroll(splitContent, split.view);
+  split.previewPosition = scrollPosition(splitContent);
+  rememberSplitLayout();
 }
 
 $('#split-note').addEventListener('click', async () => {
@@ -558,7 +615,13 @@ $('#split-note').addEventListener('click', async () => {
       event.preventDefault();
       const note = notes.find((item) => item.id === Number(splitChoice.value));
       if (!note || note.id === state.current?.id || state.current !== current) return;
-      state.split = { note, folder: null, reversed: state.split?.reversed ?? false };
+      const existing = state.split?.note.id === note.id ? state.split : null;
+      state.split = {
+        note,
+        folder: existing?.folder ?? null,
+        view: existing ? readSplitView(existing) : undefined,
+        reversed: state.split?.reversed ?? false,
+      };
       renderSplit();
       splitDialog.close();
     };
@@ -580,19 +643,25 @@ splitCloseCurrent.addEventListener('click', async () => {
   if (!split) return;
   const navigation = ++folderNavigation;
   if (!await flushSave() || navigation !== folderNavigation || state.split !== split) return;
+  const view = readSplitView(split);
   // O painel que fica começa no lado em que já estava.
-  state.split = { note: state.current, reversed: !split.reversed };
+  state.split = { note: state.current, view: readEditorView(), reversed: !split.reversed };
   renderSplit();
   state.split = null;
   renderSplit();
-  displayNote(split.note, split.folder);
+  displayNote(split.note, split.folder, view);
   $('#split-note').focus();
 });
 async function editSplitNote() {
   const id = state.split?.note.id;
   if (id == null) return;
   await openNote(id);
-  if (state.current?.id === id) el.content.focus();
+  if (state.current?.id === id) {
+    const position = scrollPosition(el.content);
+    el.content.focus({ preventScroll: true });
+    restoreScroll(el.content, position);
+    syncScroll();
+  }
 }
 splitPreview.addEventListener('click', (event) => {
   if (event.target.closest('button')) return;
@@ -628,19 +697,29 @@ function showEditor(show) {
 
 let folderNavigation = 0;
 
-async function openNote(id, { note, folder } = {}) {
+async function openNote(id, { note, folder, view } = {}) {
   const navigation = ++folderNavigation;
   if (!await flushSave() || navigation !== folderNavigation) return;
   const split = state.split;
+  if (split && state.current?.id === id) {
+    closeDrawer();
+    return;
+  }
   const swapping = split?.note.id === id;
   const n = swapping ? split.note : note || state.notes.find((x) => x.id === id);
   if (!n) return;
   if (swapping) {
-    state.split = { note: state.current, folder: state.noteFolderOrigin, reversed: !split.reversed };
+    view = readSplitView(split);
+    state.split = {
+      note: state.current,
+      folder: state.noteFolderOrigin,
+      view: readEditorView(),
+      reversed: !split.reversed,
+    };
     folder ??= split.folder;
     renderSplit();
   }
-  displayNote(n, folder);
+  displayNote(n, folder, view);
   if (swapping && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
     el.sheet.animate(
       [{ borderColor: 'var(--border)', boxShadow: 'var(--shadow)' }, {}],
@@ -649,17 +728,20 @@ async function openNote(id, { note, folder } = {}) {
   }
 }
 
-function displayNote(n, folder) {
+function displayNote(n, folder, view) {
   state.current = { ...n };
   state.noteFolderOrigin = folder || null;
   el.title.value = n.title;
   el.content.value = n.content;
-  el.content.scrollTop = 0;
   setSaveState('saved');
   showEditor(true);
   applyKind();
+  el.content.setSelectionRange(view?.start ?? 0, view?.end ?? 0, view?.direction ?? 'none');
+  restoreScroll(el.content, view);
+  syncScroll();
   renderList();
   closeDrawer();
+  if (state.split) rememberSplitLayout();
 }
 
 async function newNote(kind) {
@@ -1187,9 +1269,10 @@ deleteNoteForm.addEventListener('submit', async (event) => {
   state.current = null;
   if (state.split) {
     const { note, folder } = state.split;
+    const view = readSplitView(state.split);
     state.split = null;
     renderSplit();
-    await openNote(note.id, { note, folder });
+    await openNote(note.id, { note, folder, view });
   } else if (state.notes.length) {
     openNote(state.notes[0].id);
   } else {
@@ -1421,6 +1504,9 @@ window.addEventListener('beforeunload', (e) => {
     e.preventDefault();
   }
 });
+window.addEventListener('pagehide', () => {
+  if (state.split) rememberSplitLayout();
+});
 
 // Atualiza os tempos relativos ("há 3 min") a cada minuto
 setInterval(() => { renderList(); renderMeta(); }, 60000);
@@ -1435,6 +1521,33 @@ $('#sidebar-avatar').textContent = sidebarAvatar;
 store(sidebarAvatarKey, sidebarAvatar);
 
 if (store('locknote.sidebarCollapsed') === '1' && !isMobile()) el.app.classList.add('sidebar-collapsed');
+
+function restoreSplitLayout() {
+  let layout;
+  try {
+    layout = JSON.parse(store(splitLayoutKey) || 'null');
+  } catch {
+    store(splitLayoutKey, '');
+  }
+  if (!layout) return false;
+  const active = state.notes.find((note) => note.id === layout.activeId);
+  const other = state.notes.find((note) => note.id === layout.otherId);
+  if (!active || !other || active.id === other.id) {
+    store(splitLayoutKey, '');
+    if (!active && !other) return false;
+    displayNote(active ?? other, null, active ? layout.activeView : layout.otherView);
+    return true;
+  }
+
+  splitPage.classList.add('split-resizing');
+  setSplitSize(Number.isFinite(layout.size) ? layout.size : 50);
+  state.split = { note: other, reversed: layout.reversed === true, view: layout.otherView };
+  renderSplit();
+  displayNote(active, null, layout.activeView);
+  splitPage.classList.remove('split-resizing');
+  return true;
+}
+
 loadNotes().then(() => {
-  if (state.notes.length && folderNavigation === 0) openNote(state.notes[0].id);
+  if (state.notes.length && folderNavigation === 0 && !restoreSplitLayout()) openNote(state.notes[0].id);
 });
