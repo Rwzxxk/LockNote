@@ -51,6 +51,7 @@ const api = {
 const state = {
   notes: [],
   current: null,   // nota aberta (cópia local editável)
+  split: null,
   openFolder: null,
   noteFolderOrigin: null,
   filter: 'all',
@@ -60,6 +61,8 @@ const state = {
   dirty: false,
   lineCount: 0,
 };
+let draggedNoteId = null;
+let listNeedsRender = false;
 
 const el = {
   app: $('#app'),
@@ -168,6 +171,10 @@ function renderCounts() {
 }
 
 function renderList() {
+  if (draggedNoteId !== null) {
+    listNeedsRender = true;
+    return;
+  }
   renderCounts();
   const items = state.notes.filter((n) => state.filter === 'all' || n.kind === state.filter);
   items.sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))
@@ -195,6 +202,7 @@ function renderList() {
 
     const item = document.createElement('button');
     item.className = 'note-item';
+    item.draggable = true;
     if (state.current && state.current.id === n.id) item.classList.add('active');
 
     const icon = document.createElement('span');
@@ -228,6 +236,18 @@ function renderList() {
 
     item.append(icon, body);
     item.addEventListener('click', () => openNote(n.id));
+    item.addEventListener('dragstart', (event) => {
+      if (!state.current || state.current.id === n.id) {
+        event.preventDefault();
+        return;
+      }
+      event.dataTransfer.effectAllowed = 'copy';
+      event.dataTransfer.setData('application/x-locknote-note', String(n.id));
+      draggedNoteId = n.id;
+      splitDropTargets.hidden = false;
+      closeDrawer();
+    });
+    item.addEventListener('dragend', clearSplitDrag);
     el.list.append(item);
   }
 }
@@ -294,15 +314,18 @@ function renderHighlight() {
   if (!state.current || state.current.kind !== 'code') return;
   const text = el.content.value;
   const lang = detectLanguage(text);
-  const html = lang
-    ? hljs.highlight(text, { language: lang, ignoreIllegals: true }).value
-    : escapeHtml(text);
   // linha extra para o <pre> acompanhar o cursor na última linha vazia
-  el.hlCode.innerHTML = html + '\n';
+  el.hlCode.innerHTML = highlightedCode(text, lang) + '\n';
   state.current.language = lang;
   el.codeLang.textContent = lang ? langName(lang) : (text.trim() ? 'texto simples' : 'detectando…');
   renderGutter();
   syncScroll();
+}
+
+function highlightedCode(text, language) {
+  return language && window.hljs?.getLanguage(language)
+    ? hljs.highlight(text, { language, ignoreIllegals: true }).value
+    : escapeHtml(text);
 }
 
 function renderGutter() {
@@ -359,7 +382,11 @@ function renderStats() {
 
 function applyKind() {
   const isCode = state.current.kind === 'code';
-  $$('.kind-toggle button').forEach((b) => b.classList.toggle('active', b.dataset.kind === state.current.kind));
+  $$('.kind-toggle button').forEach((button) => {
+    const active = button.dataset.kind === state.current.kind;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
   el.sheet.classList.toggle('code', isCode);
   el.content.spellcheck = !isCode;
   el.content.placeholder = isCode ? '// cole ou escreva seu código — a linguagem é detectada sozinha' : 'Comece a escrever…';
@@ -369,7 +396,292 @@ function applyKind() {
   renderStats();
 }
 
+const splitPreview = $('#split-preview');
+const splitPage = splitPreview.parentElement;
+const splitDivider = $('#split-divider');
+const stackedSplit = matchMedia('(max-width: 560px)');
+const splitCloseCurrent = $('#split-close-current');
+const deleteButton = $('#delete');
+const splitContent = $('#split-content');
+const splitDialog = $('#split-dialog');
+const splitChoice = $('#split-choice');
+const splitSubmit = $('#split-submit');
+const splitMessage = $('#split-message');
+const splitDropTargets = $('#split-drop-targets');
+const splitLayoutKey = 'locknote.splitLayout';
+let splitRequest = 0;
+let splitResize = null;
+
+function setSplitSize(size) {
+  const first = Math.round(Math.max(25, Math.min(75, size)));
+  splitPage.style.setProperty('--split-start', `${first / 50}fr`);
+  splitPage.style.setProperty('--split-end', `${(100 - first) / 50}fr`);
+  splitDivider.setAttribute('aria-valuenow', first);
+}
+
+function updateSplitOrientation() {
+  splitDivider.setAttribute('aria-orientation', stackedSplit.matches ? 'horizontal' : 'vertical');
+}
+
+updateSplitOrientation();
+stackedSplit.addEventListener('change', updateSplitOrientation);
+
+splitDivider.addEventListener('pointerdown', (event) => {
+  if (!state.split || splitResize || event.button !== 0) return;
+  splitPage.classList.add('split-resizing');
+  const vertical = stackedSplit.matches;
+  const page = splitPage.getBoundingClientRect();
+  const padding = getComputedStyle(splitPage);
+  const handle = splitDivider.getBoundingClientRect();
+  const size = vertical ? handle.height : handle.width;
+  const start = vertical ? page.top + parseFloat(padding.paddingTop) : page.left + parseFloat(padding.paddingLeft);
+  const end = vertical ? page.bottom - parseFloat(padding.paddingBottom) : page.right - parseFloat(padding.paddingRight);
+  const offset = vertical ? event.clientY - handle.top : event.clientX - handle.left;
+  splitResize = { id: event.pointerId, vertical, start: start + offset, range: end - start - size };
+  splitDivider.setPointerCapture(event.pointerId);
+});
+
+splitDivider.addEventListener('pointermove', (event) => {
+  if (!splitResize || splitResize.id !== event.pointerId || splitResize.range <= 0) return;
+  const position = splitResize.vertical ? event.clientY : event.clientX;
+  setSplitSize(100 * (position - splitResize.start) / splitResize.range);
+});
+
+function endSplitResize() {
+  if (!splitResize) return;
+  const { id } = splitResize;
+  splitResize = null;
+  splitPage.classList.remove('split-resizing');
+  if (splitDivider.hasPointerCapture(id)) splitDivider.releasePointerCapture(id);
+  if (state.split) rememberSplitLayout();
+}
+
+splitDivider.addEventListener('lostpointercapture', endSplitResize);
+splitDivider.addEventListener('keydown', (event) => {
+  const smaller = stackedSplit.matches ? 'ArrowUp' : 'ArrowLeft';
+  const larger = stackedSplit.matches ? 'ArrowDown' : 'ArrowRight';
+  const current = Number(splitDivider.getAttribute('aria-valuenow'));
+  const sizes = { [smaller]: current - 5, [larger]: current + 5, Home: 25, End: 75 };
+  if (!Object.hasOwn(sizes, event.key)) return;
+  event.preventDefault();
+  setSplitSize(sizes[event.key]);
+  rememberSplitLayout();
+});
+
+function clearSplitDrag() {
+  draggedNoteId = null;
+  splitDropTargets.hidden = true;
+  splitDropTargets.querySelector('.drop-active')?.classList.remove('drop-active');
+  if (listNeedsRender) {
+    listNeedsRender = false;
+    renderList();
+  }
+}
+
+for (const target of splitDropTargets.children) {
+  target.addEventListener('dragover', (event) => {
+    if (draggedNoteId === null || !state.current || state.current.id === draggedNoteId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    target.classList.add('drop-active');
+  });
+  target.addEventListener('dragleave', () => target.classList.remove('drop-active'));
+  target.addEventListener('drop', (event) => {
+    const id = draggedNoteId;
+    if (id === null || event.dataTransfer.getData('application/x-locknote-note') !== String(id)) return;
+    event.preventDefault();
+    const existing = state.split?.note.id === id ? state.split : null;
+    const note = existing?.note ?? state.notes.find((item) => item.id === id);
+    if (note && state.current && state.current.id !== id) {
+      state.split = {
+        note,
+        folder: existing?.folder ?? null,
+        view: existing ? readSplitView(existing) : undefined,
+        reversed: target.dataset.splitSide === 'start',
+      };
+      renderSplit();
+    }
+    clearSplitDrag();
+  });
+}
+
+function scrollPosition(field) {
+  return { top: field.scrollTop, left: field.scrollLeft };
+}
+
+function restoreScroll(field, position) {
+  field.scrollTop = position?.top ?? 0;
+  field.scrollLeft = position?.left ?? 0;
+}
+
+function readEditorView() {
+  return {
+    ...scrollPosition(el.content),
+    start: el.content.selectionStart,
+    end: el.content.selectionEnd,
+    direction: el.content.selectionDirection,
+  };
+}
+
+function readSplitView(split) {
+  const { top, left } = scrollPosition(splitContent);
+  return {
+    ...split.view,
+    top: top === split.previewPosition?.top ? split.view?.top ?? top : top,
+    left: left === split.previewPosition?.left ? split.view?.left ?? left : left,
+  };
+}
+
+function rememberSplitLayout() {
+  const { current, split } = state;
+  if (!split) {
+    store(splitLayoutKey, '');
+    return;
+  }
+  if (!current || current.id === split.note.id) return;
+  store(splitLayoutKey, JSON.stringify({
+    activeId: current.id,
+    otherId: split.note.id,
+    reversed: split.reversed,
+    size: Number(splitDivider.getAttribute('aria-valuenow')),
+    activeView: readEditorView(),
+    otherView: readSplitView(split),
+  }));
+}
+
+function renderSplit() {
+  const split = state.split;
+  splitPreview.inert = !split;
+  splitCloseCurrent.hidden = !split;
+  deleteButton.hidden = Boolean(split);
+  splitDivider.hidden = !split;
+  if (!split) endSplitResize();
+  if (split) {
+    const prepareSide = !splitPage.classList.contains('split-view')
+      && !splitPage.classList.contains('split-resizing')
+      && splitPage.classList.contains('split-reversed') !== split.reversed;
+    if (prepareSide) splitPage.classList.add('split-resizing');
+    splitPage.classList.toggle('split-reversed', split.reversed);
+    if (prepareSide) {
+      // Posiciona o editor antes de animar o novo painel.
+      splitPage.getBoundingClientRect();
+      splitPage.classList.remove('split-resizing');
+    }
+  }
+  splitPage.classList.toggle('split-view', Boolean(split));
+  if (!split) {
+    rememberSplitLayout();
+    return;
+  }
+  const { note } = split;
+  const code = note.kind === 'code';
+  $('#split-preview-title').textContent = note.title || 'Sem título';
+  const kind = $('#split-kind');
+  kind.classList.toggle('code', code);
+  kind.innerHTML = ICONS[note.kind];
+  kind.append(code ? 'Código' : 'Texto');
+  $('#split-sheet').classList.toggle('code', code);
+  $('#split-language').textContent = langName(note.language) || 'texto simples';
+  splitContent.firstElementChild.innerHTML = code
+    ? highlightedCode(note.content, note.language)
+    : escapeHtml(note.content);
+  restoreScroll(splitContent, split.view);
+  split.previewPosition = scrollPosition(splitContent);
+  rememberSplitLayout();
+}
+
+$('#split-note').addEventListener('click', async () => {
+  const requestId = ++splitRequest;
+  const current = state.current;
+  const form = $('#split-form');
+  form.onsubmit = (event) => event.preventDefault();
+  splitChoice.replaceChildren();
+  splitSubmit.disabled = true;
+  splitMessage.textContent = 'Carregando notas…';
+  splitDialog.showModal();
+  try {
+    const notes = await api.list();
+    if (!splitDialog.open || requestId !== splitRequest || state.current !== current) return;
+    for (const note of notes) {
+      if (note.id === current.id) continue;
+      const kind = note.kind === 'code' ? 'Código' : 'Nota';
+      splitChoice.add(new Option(`${note.title || 'Sem título'} · ${kind}`, note.id));
+    }
+    const previous = notes.find((note) => note.id === state.split?.note.id);
+    if (previous) splitChoice.value = String(previous.id);
+    splitSubmit.disabled = !splitChoice.options.length;
+    splitMessage.textContent = splitSubmit.disabled ? 'Crie outra nota ou código para dividir a tela.' : '';
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      const note = notes.find((item) => item.id === Number(splitChoice.value));
+      if (!note || note.id === state.current?.id || state.current !== current) return;
+      const existing = state.split?.note.id === note.id ? state.split : null;
+      state.split = {
+        note,
+        folder: existing?.folder ?? null,
+        view: existing ? readSplitView(existing) : undefined,
+        reversed: state.split?.reversed ?? false,
+      };
+      renderSplit();
+      splitDialog.close();
+    };
+  } catch {
+    if (splitDialog.open && requestId === splitRequest) {
+      splitMessage.textContent = 'Não foi possível carregar as notas.';
+    }
+  }
+});
+
+$('#split-cancel').addEventListener('click', () => splitDialog.close());
+$('#split-close').addEventListener('click', () => {
+  state.split = null;
+  renderSplit();
+  $('#split-note').focus();
+});
+splitCloseCurrent.addEventListener('click', async () => {
+  const split = state.split;
+  if (!split) return;
+  const navigation = ++folderNavigation;
+  if (!await flushSave() || navigation !== folderNavigation || state.split !== split) return;
+  const view = readSplitView(split);
+  // O painel que fica começa no lado em que já estava.
+  state.split = { note: state.current, view: readEditorView(), reversed: !split.reversed };
+  renderSplit();
+  state.split = null;
+  renderSplit();
+  displayNote(split.note, split.folder, view);
+  $('#split-note').focus();
+});
+async function editSplitNote() {
+  const id = state.split?.note.id;
+  if (id == null) return;
+  await openNote(id);
+  if (state.current?.id === id) {
+    const position = scrollPosition(el.content);
+    el.content.focus({ preventScroll: true });
+    restoreScroll(el.content, position);
+    syncScroll();
+  }
+}
+splitPreview.addEventListener('click', (event) => {
+  if (event.target.closest('button')) return;
+  const selection = window.getSelection();
+  if (selection && !selection.isCollapsed && splitContent.contains(selection.anchorNode)) return;
+  editSplitNote();
+});
+splitContent.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  editSplitNote();
+});
+
 function showEditor(show) {
+  if (!show) {
+    closeNoteOptions();
+    clearSplitDrag();
+    state.split = null;
+    renderSplit();
+  }
   el.foldersView.hidden = true;
   el.empty.hidden = show;
   el.editor.hidden = !show;
@@ -385,21 +697,51 @@ function showEditor(show) {
 
 let folderNavigation = 0;
 
-async function openNote(id, { note, folder } = {}) {
-  folderNavigation++;
-  if (!await flushSave()) return;
-  const n = note || state.notes.find((x) => x.id === id);
+async function openNote(id, { note, folder, view } = {}) {
+  const navigation = ++folderNavigation;
+  if (!await flushSave() || navigation !== folderNavigation) return;
+  const split = state.split;
+  if (split && state.current?.id === id) {
+    closeDrawer();
+    return;
+  }
+  const swapping = split?.note.id === id;
+  const n = swapping ? split.note : note || state.notes.find((x) => x.id === id);
   if (!n) return;
+  if (swapping) {
+    view = readSplitView(split);
+    state.split = {
+      note: state.current,
+      folder: state.noteFolderOrigin,
+      view: readEditorView(),
+      reversed: !split.reversed,
+    };
+    folder ??= split.folder;
+    renderSplit();
+  }
+  displayNote(n, folder, view);
+  if (swapping && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    el.sheet.animate(
+      [{ borderColor: 'var(--border)', boxShadow: 'var(--shadow)' }, {}],
+      { duration: 180, easing: 'ease-out' },
+    );
+  }
+}
+
+function displayNote(n, folder, view) {
   state.current = { ...n };
   state.noteFolderOrigin = folder || null;
   el.title.value = n.title;
   el.content.value = n.content;
-  el.content.scrollTop = 0;
   setSaveState('saved');
   showEditor(true);
   applyKind();
+  el.content.setSelectionRange(view?.start ?? 0, view?.end ?? 0, view?.direction ?? 'none');
+  restoreScroll(el.content, view);
+  syncScroll();
   renderList();
   closeDrawer();
+  if (state.split) rememberSplitLayout();
 }
 
 async function newNote(kind) {
@@ -421,12 +763,123 @@ const folderForm = $('#folder-form');
 const folderFormButton = $('#show-folder-form');
 const editFolderButton = $('#edit-folder');
 const folderColorPreview = $('#folder-color-preview');
+const folderColorPicker = $('#folder-color-picker');
+const folderColorPanel = $('#folder-color-panel');
+const folderColorWheel = $('#folder-color-wheel');
+const folderColorBrightness = $('#folder-color-brightness');
+const folderColorText = $('#folder-color-text');
+const folderColorPresets = {
+  blue: '#4389ed', green: '#279d6d', orange: '#de831e', pink: '#d9609c', purple: '#9971e8',
+};
+let folderHSV;
 const folderSubmit = folderForm.querySelector('[type="submit"]');
 const folderGrid = $('#folders-grid');
 const folderEmpty = $('#folders-empty');
 const folderError = $('#folder-error');
 const folderBack = $('#folder-back');
 const folderTitle = $('#folders-title');
+
+function normalizeFolderColor(value) {
+  const text = value.trim().toLowerCase();
+  if (!text) return 'default';
+  const hex = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/.exec(text);
+  if (hex) {
+    const digits = hex[1];
+    return '#' + (digits.length === 3 ? [...digits].map((digit) => digit.repeat(2)).join('') : digits);
+  }
+  const rgb = /^rgb\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*\)$/.exec(text)
+    || /^(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})$/.exec(text);
+  const channels = rgb?.slice(1).map(Number);
+  return channels?.every((channel) => channel <= 255) ? folderHex(channels) : null;
+}
+
+function folderHex(channels) {
+  return '#' + channels.map((channel) => Math.round(channel).toString(16).padStart(2, '0')).join('');
+}
+
+function hexToFolderHSV(hex) {
+  const [red, green, blue] = hex.slice(1).match(/../g).map((channel) => parseInt(channel, 16) / 255);
+  const value = Math.max(red, green, blue);
+  const delta = value - Math.min(red, green, blue);
+  let hue = 0;
+  if (delta) {
+    if (value === red) hue = (green - blue) / delta;
+    else if (value === green) hue = 2 + (blue - red) / delta;
+    else hue = 4 + (red - green) / delta;
+  }
+  return { hue: (hue + 6) % 6, saturation: value ? delta / value : 0, value };
+}
+
+function setFolderColor(element, color) {
+  const hex = normalizeFolderColor(Object.hasOwn(folderColorPresets, color) ? folderColorPresets[color] : color);
+  element.dataset.color = hex && hex !== 'default' ? 'custom' : 'default';
+  if (element.dataset.color === 'custom') element.style.setProperty('--folder-color', hex);
+  else element.style.removeProperty('--folder-color');
+}
+
+function renderFolderColor(hex) {
+  const { hue, saturation, value } = folderHSV;
+  const angle = hue * Math.PI / 3;
+  folderColorWheel.style.setProperty('--wheel-x', `${50 + Math.sin(angle) * saturation * 50}%`);
+  folderColorWheel.style.setProperty('--wheel-y', `${50 - Math.cos(angle) * saturation * 50}%`);
+  folderColorWheel.style.setProperty('--wheel-shade', 1 - value);
+  folderColorBrightness.value = Math.round(value * 100);
+  setFolderColor(folderColorPreview, hex);
+}
+
+function applyFolderWheelColor() {
+  const { hue, saturation, value } = folderHSV;
+  const chroma = value * saturation;
+  const middle = chroma * (1 - Math.abs(hue % 2 - 1));
+  const channels = [
+    [chroma, middle, 0], [middle, chroma, 0], [0, chroma, middle],
+    [0, middle, chroma], [middle, 0, chroma], [chroma, 0, middle],
+  ][Math.floor(hue)];
+  folderColorText.value = folderHex(channels.map((channel) => 255 * (channel + value - chroma)));
+  folderError.hidden = true;
+  renderFolderColor(folderColorText.value);
+}
+
+function selectFolderWheelColor(event) {
+  const bounds = folderColorWheel.getBoundingClientRect();
+  const x = 2 * (event.clientX - bounds.left) / bounds.width - 1;
+  const y = 2 * (event.clientY - bounds.top) / bounds.height - 1;
+  folderHSV.hue = (Math.atan2(x, -y) * 3 / Math.PI + 6) % 6;
+  folderHSV.saturation = Math.min(1, Math.hypot(x, y));
+  applyFolderWheelColor();
+}
+
+folderColorWheel.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
+  folderColorWheel.setPointerCapture(event.pointerId);
+  selectFolderWheelColor(event);
+});
+folderColorWheel.addEventListener('pointermove', (event) => {
+  if (folderColorWheel.hasPointerCapture(event.pointerId)) selectFolderWheelColor(event);
+});
+folderColorBrightness.addEventListener('input', () => {
+  folderHSV.value = Number(folderColorBrightness.value) / 100;
+  applyFolderWheelColor();
+});
+function updateFolderColorFromText() {
+  const hex = normalizeFolderColor(folderColorText.value);
+  if (!hex) return;
+  folderError.hidden = true;
+  folderHSV = hexToFolderHSV(hex === 'default' ? '#6544ce' : hex);
+  renderFolderColor(hex);
+}
+
+function toggleFolderColorPanel(open) {
+  folderColorPanel.hidden = !open;
+  folderColorPicker.setAttribute('aria-expanded', String(open));
+}
+
+folderColorPicker.addEventListener('click', () => toggleFolderColorPanel(folderColorPanel.hidden));
+folderColorText.addEventListener('input', updateFolderColorFromText);
+$('#folder-color-reset').addEventListener('click', () => {
+  folderColorText.value = '';
+  updateFolderColorFromText();
+});
 
 function addFolderCard(icon, title, subtitle, onClick, folder) {
   const card = document.createElement('button');
@@ -443,7 +896,7 @@ function addFolderCard(icon, title, subtitle, onClick, folder) {
     folderGrid.append(card);
     return;
   }
-  card.dataset.color = folder.color || 'default';
+  setFolderColor(card, folder.color || 'default');
   const item = document.createElement('div');
   item.className = 'folder-grid-item';
   const remove = document.createElement('button');
@@ -512,21 +965,27 @@ function toggleFolderForm(folder = null) {
   if (folderForm.hidden) return;
   folderError.hidden = true;
   folderForm.elements.name.value = folder?.name || '';
-  folderForm.elements.color.value = folder?.color || 'default';
-  folderColorPreview.dataset.color = folderForm.elements.color.value;
+  const saved = folder?.color || 'default';
+  folderColorText.value = Object.hasOwn(folderColorPresets, saved) ? folderColorPresets[saved] : saved === 'default' ? '' : saved;
+  toggleFolderColorPanel(false);
+  updateFolderColorFromText();
   folderSubmit.textContent = folder ? 'Salvar alterações' : 'Criar pasta';
   folderForm.elements.name.focus();
 }
 folderFormButton.addEventListener('click', () => toggleFolderForm());
 editFolderButton.addEventListener('click', () => toggleFolderForm(state.openFolder));
-folderForm.elements.color.addEventListener('change', () => {
-  folderColorPreview.dataset.color = folderForm.elements.color.value;
-});
 folderForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (folderSubmit.disabled) return;
   const folder = state.openFolder;
-  const { name, color } = Object.fromEntries(new FormData(folderForm));
+  const { name } = Object.fromEntries(new FormData(folderForm));
+  const color = normalizeFolderColor(folderColorText.value);
+  if (!color) {
+    folderError.textContent = 'Use um HEX como #7c3aed ou um RGB como rgb(124, 58, 237).';
+    folderError.hidden = false;
+    folderColorText.focus();
+    return;
+  }
   const navigation = folderNavigation;
   folderSubmit.disabled = true;
   folderError.hidden = true;
@@ -808,7 +1267,13 @@ deleteNoteForm.addEventListener('submit', async (event) => {
   }
   state.dirty = false;
   state.current = null;
-  if (state.notes.length) {
+  if (state.split) {
+    const { note, folder } = state.split;
+    const view = readSplitView(state.split);
+    state.split = null;
+    renderSplit();
+    await openNote(note.id, { note, folder, view });
+  } else if (state.notes.length) {
     openNote(state.notes[0].id);
   } else {
     showEditor(false);
@@ -832,9 +1297,27 @@ function insertText(text) {
 
 // ---------- Eventos ----------
 const accountControl = $('#account-control');
+const noteMore = $('#note-more');
+const noteOverflow = $('#note-overflow');
+
+function closeNoteOptions(restoreFocus = false) {
+  if (noteMore.getAttribute('aria-expanded') !== 'true') return;
+  noteMore.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) noteMore.focus();
+}
+
+noteMore.addEventListener('click', () => {
+  const open = noteMore.getAttribute('aria-expanded') === 'true';
+  noteMore.setAttribute('aria-expanded', String(!open));
+});
+noteOverflow.addEventListener('click', (event) => {
+  if (event.target.closest('button')) closeNoteOptions(noteOverflow.contains(document.activeElement));
+});
+matchMedia('(max-width: 560px)').addEventListener('change', () => closeNoteOptions());
 const accountToggle = $('#account-toggle');
 
 document.addEventListener('click', (e) => {
+  if (!noteMore.contains(e.target) && !noteOverflow.contains(e.target)) closeNoteOptions();
   if (accountControl.open && !accountControl.contains(e.target)) accountControl.open = false;
 });
 
@@ -923,7 +1406,10 @@ el.pinNote.addEventListener('click', async () => {
   }
 });
 $('#copy-code').addEventListener('click', copyContent);
-$('#delete').addEventListener('click', openDeleteNoteDialog);
+deleteButton.addEventListener('click', () => {
+  closeNoteOptions(true);
+  openDeleteNoteDialog();
+});
 $$('.tab').forEach((t) => t.addEventListener('click', () => setFilter(t.dataset.filter)));
 
 el.title.addEventListener('input', () => {
@@ -988,8 +1474,12 @@ el.search.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (registration.open || login.open || editAccount.open || moveNoteDialog.open
+  if (splitDialog.open || registration.open || login.open || editAccount.open || moveNoteDialog.open
     || removeFolderDialog.open || deleteNoteDialog.open) return;
+  if (e.key === 'Escape' && noteMore.getAttribute('aria-expanded') === 'true') {
+    closeNoteOptions(true);
+    return;
+  }
   if (e.key === 'Escape' && accountControl.open) {
     accountControl.open = false;
     accountToggle.focus();
@@ -1014,6 +1504,9 @@ window.addEventListener('beforeunload', (e) => {
     e.preventDefault();
   }
 });
+window.addEventListener('pagehide', () => {
+  if (state.split) rememberSplitLayout();
+});
 
 // Atualiza os tempos relativos ("há 3 min") a cada minuto
 setInterval(() => { renderList(); renderMeta(); }, 60000);
@@ -1028,6 +1521,33 @@ $('#sidebar-avatar').textContent = sidebarAvatar;
 store(sidebarAvatarKey, sidebarAvatar);
 
 if (store('locknote.sidebarCollapsed') === '1' && !isMobile()) el.app.classList.add('sidebar-collapsed');
+
+function restoreSplitLayout() {
+  let layout;
+  try {
+    layout = JSON.parse(store(splitLayoutKey) || 'null');
+  } catch {
+    store(splitLayoutKey, '');
+  }
+  if (!layout) return false;
+  const active = state.notes.find((note) => note.id === layout.activeId);
+  const other = state.notes.find((note) => note.id === layout.otherId);
+  if (!active || !other || active.id === other.id) {
+    store(splitLayoutKey, '');
+    if (!active && !other) return false;
+    displayNote(active ?? other, null, active ? layout.activeView : layout.otherView);
+    return true;
+  }
+
+  splitPage.classList.add('split-resizing');
+  setSplitSize(Number.isFinite(layout.size) ? layout.size : 50);
+  state.split = { note: other, reversed: layout.reversed === true, view: layout.otherView };
+  renderSplit();
+  displayNote(active, null, layout.activeView);
+  splitPage.classList.remove('split-resizing');
+  return true;
+}
+
 loadNotes().then(() => {
-  if (state.notes.length && folderNavigation === 0) openNote(state.notes[0].id);
+  if (state.notes.length && folderNavigation === 0 && !restoreSplitLayout()) openNote(state.notes[0].id);
 });
