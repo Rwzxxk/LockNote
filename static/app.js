@@ -61,6 +61,8 @@ const state = {
   dirty: false,
   lineCount: 0,
 };
+let draggedNoteId = null;
+let listNeedsRender = false;
 
 const el = {
   app: $('#app'),
@@ -169,6 +171,10 @@ function renderCounts() {
 }
 
 function renderList() {
+  if (draggedNoteId !== null) {
+    listNeedsRender = true;
+    return;
+  }
   renderCounts();
   const items = state.notes.filter((n) => state.filter === 'all' || n.kind === state.filter);
   items.sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))
@@ -196,6 +202,7 @@ function renderList() {
 
     const item = document.createElement('button');
     item.className = 'note-item';
+    item.draggable = true;
     if (state.current && state.current.id === n.id) item.classList.add('active');
 
     const icon = document.createElement('span');
@@ -229,6 +236,18 @@ function renderList() {
 
     item.append(icon, body);
     item.addEventListener('click', () => openNote(n.id));
+    item.addEventListener('dragstart', (event) => {
+      if (!state.current || state.current.id === n.id) {
+        event.preventDefault();
+        return;
+      }
+      event.dataTransfer.effectAllowed = 'copy';
+      event.dataTransfer.setData('application/x-locknote-note', String(n.id));
+      draggedNoteId = n.id;
+      splitDropTargets.hidden = false;
+      closeDrawer();
+    });
+    item.addEventListener('dragend', clearSplitDrag);
     el.list.append(item);
   }
 }
@@ -374,23 +393,65 @@ function applyKind() {
 }
 
 const splitPreview = $('#split-preview');
+const splitCloseCurrent = $('#split-close-current');
+const deleteButton = $('#delete');
 const splitContent = $('#split-content');
 const splitDialog = $('#split-dialog');
 const splitChoice = $('#split-choice');
 const splitSubmit = $('#split-submit');
 const splitMessage = $('#split-message');
+const splitDropTargets = $('#split-drop-targets');
 let splitRequest = 0;
+
+function clearSplitDrag() {
+  draggedNoteId = null;
+  splitDropTargets.hidden = true;
+  splitDropTargets.querySelector('.drop-active')?.classList.remove('drop-active');
+  if (listNeedsRender) {
+    listNeedsRender = false;
+    renderList();
+  }
+}
+
+for (const target of splitDropTargets.children) {
+  target.addEventListener('dragover', (event) => {
+    if (draggedNoteId === null || !state.current || state.current.id === draggedNoteId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    target.classList.add('drop-active');
+  });
+  target.addEventListener('dragleave', () => target.classList.remove('drop-active'));
+  target.addEventListener('drop', (event) => {
+    const id = draggedNoteId;
+    if (id === null || event.dataTransfer.getData('application/x-locknote-note') !== String(id)) return;
+    event.preventDefault();
+    const existing = state.split?.note.id === id ? state.split : null;
+    const note = existing?.note ?? state.notes.find((item) => item.id === id);
+    if (note && state.current && state.current.id !== id) {
+      state.split = { note, folder: existing?.folder ?? null, reversed: target.dataset.splitSide === 'start' };
+      renderSplit();
+    }
+    clearSplitDrag();
+  });
+}
 
 function renderSplit() {
   const split = state.split;
   splitPreview.hidden = !split;
+  splitCloseCurrent.hidden = !split;
+  deleteButton.hidden = Boolean(split);
   splitPreview.parentElement.classList.toggle('split-view', Boolean(split));
   splitPreview.parentElement.classList.toggle('split-reversed', Boolean(split?.reversed));
   if (!split) return;
   const { note } = split;
   const code = note.kind === 'code';
   $('#split-preview-title').textContent = note.title || 'Sem título';
-  splitContent.classList.toggle('code', code);
+  const kind = $('#split-kind');
+  kind.classList.toggle('code', code);
+  kind.innerHTML = ICONS[note.kind];
+  kind.append(code ? 'Código' : 'Texto');
+  $('#split-sheet').classList.toggle('code', code);
+  $('#split-language').textContent = langName(note.language) || 'texto simples';
   splitContent.firstElementChild.innerHTML = code
     ? highlightedCode(note.content, note.language)
     : escapeHtml(note.content);
@@ -440,6 +501,16 @@ $('#split-close').addEventListener('click', () => {
   renderSplit();
   $('#split-note').focus();
 });
+splitCloseCurrent.addEventListener('click', async () => {
+  const split = state.split;
+  if (!split) return;
+  const navigation = ++folderNavigation;
+  if (!await flushSave() || navigation !== folderNavigation || state.split !== split) return;
+  state.split = null;
+  renderSplit();
+  displayNote(split.note, split.folder);
+  $('#split-note').focus();
+});
 $('#split-edit').addEventListener('click', async () => {
   const id = state.split.note.id;
   await openNote(id);
@@ -448,6 +519,7 @@ $('#split-edit').addEventListener('click', async () => {
 
 function showEditor(show) {
   if (!show) {
+    clearSplitDrag();
     state.split = null;
     renderSplit();
   }
@@ -478,6 +550,10 @@ async function openNote(id, { note, folder } = {}) {
     folder ??= split.folder;
     renderSplit();
   }
+  displayNote(n, folder);
+}
+
+function displayNote(n, folder) {
   state.current = { ...n };
   state.noteFolderOrigin = folder || null;
   el.title.value = n.title;
@@ -1016,7 +1092,7 @@ el.pinNote.addEventListener('click', async () => {
   }
 });
 $('#copy-code').addEventListener('click', copyContent);
-$('#delete').addEventListener('click', openDeleteNoteDialog);
+deleteButton.addEventListener('click', openDeleteNoteDialog);
 $$('.tab').forEach((t) => t.addEventListener('click', () => setFilter(t.dataset.filter)));
 
 el.title.addEventListener('input', () => {

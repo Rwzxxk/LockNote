@@ -406,6 +406,8 @@ kbd {
   transition: background .12s;
 }
 .note-item:hover { background: var(--hover); }
+.note-item[draggable="true"] { cursor: grab; }
+.note-item[draggable="true"]:active { cursor: grabbing; }
 .note-item.active { background: var(--surface); border-color: var(--border); box-shadow: var(--shadow); }
 .ni-icon {
   display: grid;
@@ -523,6 +525,7 @@ kbd {
 .kind-toggle button[data-kind="code"].active { color: var(--code-accent); }
 
 .page {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -530,6 +533,28 @@ kbd {
   max-width: 980px;
   margin: 0 auto;
   padding: 28px 32px 20px;
+}
+
+.split-drop-targets {
+  position: absolute;
+  inset: 12px;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.split-drop-targets > div {
+  border: 1px solid transparent;
+  border-radius: 12px;
+  transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+.split-drop-targets > .drop-active {
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 0 3px 16px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .split-drop-targets > div { transition: none; }
 }
 
 .page.split-view {
@@ -540,46 +565,13 @@ kbd {
   gap: 16px;
 }
 .split-reversed .split-preview { order: -1; }
-.split-preview {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-}
-.split-preview header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-}
-.split-preview h2 {
-  flex: 1;
-  min-width: 0;
+.split-preview { min-width: 0; }
+.split-preview .title {
   margin: 0;
-  font-size: 14px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.split-preview pre {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  margin: 0;
-  padding: 16px;
-  font: inherit;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.split-preview pre.code {
-  font: 13px/1.6 var(--mono);
-  white-space: pre;
-}
-.split-preview .hljs { padding: 0; background: transparent; font: inherit; }
 #split-choice {
   width: 100%;
   padding: 8px;
@@ -650,8 +642,15 @@ kbd {
 .editor { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .note-back { align-self: flex-start; flex-shrink: 0; margin-bottom: 12px; }
 
+.editor-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.editor-title-row .icon-btn { flex: none; }
 .title {
   width: 100%;
+  min-width: 0;
   padding: 0;
   border: 0;
   outline: none;
@@ -793,6 +792,18 @@ kbd {
 .sheet.code .content-wrap textarea { color: transparent; caret-color: var(--fg); overflow: auto; }
 .sheet.code .content-wrap textarea::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 .content-wrap pre code.hljs { padding: 0; background: transparent; display: block; overflow: visible; }
+#split-content {
+  display: block;
+  overflow: auto;
+  pointer-events: auto;
+}
+#split-sheet:not(.code) #split-content code {
+  font: 16px/1.75 var(--sans);
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sheet.code #split-content { padding: 18px 20px; }
 
 /* ---------- Barra de status ---------- */
 .statusbar {
@@ -879,6 +890,10 @@ kbd {
 }
 
 @media (max-width: 560px) {
+  .split-drop-targets {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
   .page.split-view {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: repeat(2, minmax(0, 1fr));
@@ -901,6 +916,8 @@ kbd {
   .sheet.code .content-wrap textarea,
   .sheet.code .content-wrap pre,
   .sheet.code .content-wrap pre code { font-size: 12.5px; }
+  .sheet.code #split-content { padding: 14px; }
+  #split-sheet:not(.code) #split-content code { font-size: 15.5px; }
   .empty-actions { grid-template-columns: 1fr; }
   .shortcuts { display: none; }
   .statusbar { padding: 0 12px; }
