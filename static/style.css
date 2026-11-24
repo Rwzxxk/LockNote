@@ -245,6 +245,26 @@ kbd {
   font-weight: 600;
 }
 .account-panel button:hover { background: var(--hover); }
+.theme-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-inline);
+  margin-top: 4px;
+  padding: var(--space-inline) 4px 4px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-2);
+  font-size: 12px;
+}
+.theme-picker select {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  padding: 4px 6px;
+  background: var(--surface-2);
+  color: var(--accent-text);
+  font: inherit;
+  cursor: pointer;
+}
 .registration {
   width: min(420px, calc(100% - 24px));
   padding: 24px;
@@ -536,23 +556,6 @@ kbd {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
-}
-.sb-account { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.theme-picker {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--muted);
-  font-size: 11.5px;
-}
-.theme-picker select {
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  padding: 3px 4px;
-  background: var(--surface-2);
-  color: var(--accent-text);
-  font: inherit;
-  cursor: pointer;
 }
 .sb-storage {
   display: flex;
