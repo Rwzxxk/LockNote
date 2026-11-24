@@ -437,11 +437,12 @@ for (const target of splitDropTargets.children) {
 
 function renderSplit() {
   const split = state.split;
-  splitPreview.hidden = !split;
+  const page = splitPreview.parentElement;
+  splitPreview.inert = !split;
   splitCloseCurrent.hidden = !split;
   deleteButton.hidden = Boolean(split);
-  splitPreview.parentElement.classList.toggle('split-view', Boolean(split));
-  splitPreview.parentElement.classList.toggle('split-reversed', Boolean(split?.reversed));
+  if (split) page.classList.toggle('split-reversed', split.reversed);
+  page.classList.toggle('split-view', Boolean(split));
   if (!split) return;
   const { note } = split;
   const code = note.kind === 'code';
@@ -506,15 +507,30 @@ splitCloseCurrent.addEventListener('click', async () => {
   if (!split) return;
   const navigation = ++folderNavigation;
   if (!await flushSave() || navigation !== folderNavigation || state.split !== split) return;
+  // O painel que fica começa no lado em que já estava.
+  state.split = { note: state.current, reversed: !split.reversed };
+  renderSplit();
   state.split = null;
   renderSplit();
   displayNote(split.note, split.folder);
   $('#split-note').focus();
 });
-$('#split-edit').addEventListener('click', async () => {
-  const id = state.split.note.id;
+async function editSplitNote() {
+  const id = state.split?.note.id;
+  if (id == null) return;
   await openNote(id);
   if (state.current?.id === id) el.content.focus();
+}
+splitPreview.addEventListener('click', (event) => {
+  if (event.target.closest('button')) return;
+  const selection = window.getSelection();
+  if (selection && !selection.isCollapsed && splitContent.contains(selection.anchorNode)) return;
+  editSplitNote();
+});
+splitContent.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  editSplitNote();
 });
 
 function showEditor(show) {
@@ -551,6 +567,12 @@ async function openNote(id, { note, folder } = {}) {
     renderSplit();
   }
   displayNote(n, folder);
+  if (swapping && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    el.sheet.animate(
+      [{ borderColor: 'var(--border)', boxShadow: 'var(--shadow)' }, {}],
+      { duration: 180, easing: 'ease-out' },
+    );
+  }
 }
 
 function displayNote(n, folder) {

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-  <link rel="stylesheet" href="/style.css?v=split-note-sheet">
+  <link rel="stylesheet" href="/style.css?v=split-click">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -229,7 +229,7 @@
             </div>
           </div>
         </article>
-        <section id="split-preview" class="editor split-preview" aria-labelledby="split-preview-title" hidden>
+        <section id="split-preview" class="editor split-preview" aria-labelledby="split-preview-title" inert>
           <header class="editor-title-row">
             <h2 id="split-preview-title" class="title"></h2>
             <button type="button" class="icon-btn" id="split-close" title="Fechar painel" aria-label="Fechar painel de visualização">
@@ -238,7 +238,6 @@
           </header>
           <div class="meta">
             <span class="pill" id="split-kind"></span>
-            <button type="button" class="btn btn-secondary note-meta-button" id="split-edit">Editar</button>
           </div>
           <div class="sheet" id="split-sheet">
             <div class="code-head">
@@ -246,7 +245,7 @@
               <span class="code-lang" id="split-language"></span>
             </div>
             <div class="content-wrap">
-              <pre id="split-content" tabindex="0"><code class="hljs"></code></pre>
+              <pre id="split-content" tabindex="0" aria-label="Enter para editar esta nota"><code class="hljs"></code></pre>
             </div>
           </div>
         </section>
@@ -367,6 +366,6 @@
       </div>
     </form>
   </dialog>
-  <script src="/app.js?v=split-note-sheet"></script>
+  <script src="/app.js?v=split-click"></script>
 </body>
 </html>
